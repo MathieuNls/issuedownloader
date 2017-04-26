@@ -11,8 +11,8 @@ import (
 
 	"database/sql"
 
-	"github.com/BUMPER/IssueDownloader/wordnet"
 	_ "github.com/go-sql-driver/mysql"
+	"github.com/mathieunls/deepchange-downloader/wordnet"
 )
 
 //Report represents a bug report
@@ -84,7 +84,7 @@ func (report *GenericReport) WriteNGramsToDisk(db *sql.DB, dbPrefix string, gram
 
 	//Fetches bug type
 	reportType := report.getType(db, dbPrefix)
-	
+
 	// Create the file
 	out, err := os.Create(report.FilePath + "." + strconv.Itoa(grams) + "grams.wnet.xml")
 	if err != nil {

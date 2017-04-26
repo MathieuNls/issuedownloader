@@ -1,15 +1,16 @@
 package main
 
 import (
-	"os"
-
-	"github.com/BUMPER/IssueDownloader/wordnet"
 	_ "github.com/go-sql-driver/mysql"
+	"github.com/mathieunls/deepchange-downloader/git"
 )
 
 func main() {
 
-	pwd, _ := os.Getwd()
+	gitCMD := git.New()
+
+	gitCMD.Commits("D:\\ace", "")
+
 	// basePath := pwd + "/src/github.com/BUMPER/IssueDownloader/data/netbeans/"
 	// baseURL := "https://netbeans.org/bugzilla/show_bug.cgi?ctype=xml&id="
 	// db, err := sql.Open("mysql", "root:root@tcp(192.168.0.112:3306)/taxo")
@@ -49,27 +50,27 @@ func main() {
 
 	//wordnet.IdfMap(pwd+"/src/github.com/BUMPER/IssueDownloader/data/tf/apache.tf.wnet", "bug_apache_", []string{"ambari"}, []string{"1", "2", "3", "4"}, []string{"3"}, 5, 10)
 
-	apacheProducts := []string{"ambari", "hbase", "cassandra", "hive", "flume"}
-	netbeansProducts := []string{"editor", "javaee", "cnd", "java", "platform"}
+	// apacheProducts := []string{"ambari", "hbase", "cassandra", "hive", "flume"}
+	// netbeansProducts := []string{"editor", "javaee", "cnd", "java", "platform"}
 
-	// wordnet.IdfMap(pwd+"/src/github.com/BUMPER/IssueDownloader/data/tf/apache.tf.wnet", "bug_apache_", []string{apacheProducts[0]}, []string{"1", "2", "3", "4"}, []string{"4"}, 10, 20)
-	// wordnet.IdfMap(pwd+"/src/github.com/BUMPER/IssueDownloader/data/tf/apache.tf.wnet", "bug_apache_", []string{apacheProducts[0]}, []string{"1", "2", "3", "4"}, []string{"3"}, 10, 20)
 	// // wordnet.IdfMap(pwd+"/src/github.com/BUMPER/IssueDownloader/data/tf/apache.tf.wnet", "bug_apache_", []string{apacheProducts[0]}, []string{"1", "2", "3", "4"}, []string{"4"}, 10, 20)
+	// // wordnet.IdfMap(pwd+"/src/github.com/BUMPER/IssueDownloader/data/tf/apache.tf.wnet", "bug_apache_", []string{apacheProducts[0]}, []string{"1", "2", "3", "4"}, []string{"3"}, 10, 20)
+	// // // wordnet.IdfMap(pwd+"/src/github.com/BUMPER/IssueDownloader/data/tf/apache.tf.wnet", "bug_apache_", []string{apacheProducts[0]}, []string{"1", "2", "3", "4"}, []string{"4"}, 10, 20)
 
-	for i := 0; i < len(apacheProducts); i++ {
-		wordnet.IdfMap(pwd+"/src/github.com/BUMPER/IssueDownloader/data/tf/apache.tf.wnet", "bug_apache_", []string{apacheProducts[i]}, []string{"1", "2", "3", "4"}, []string{"3"}, 500, 500000, false)
-		//wordnet.IdfMap(pwd+"/src/github.com/BUMPER/IssueDownloader/data/tf/apache.tf.wnet", "bug_apache_", []string{apacheProducts[i]}, []string{"1", "2", "3", "4"}, []string{"4"}, 40, 120, false)
-		// wordnet.IdfMap(pwd+"/src/github.com/BUMPER/IssueDownloader/data/tf/apache.tf.wnet", "bug_apache_", []string{apacheProducts[i]}, []string{"1", "2", "3", "4"}, []string{"3", "4"}, 40, 120, false)
+	// for i := 0; i < len(apacheProducts); i++ {
+	// 	wordnet.IdfMap(pwd+"/src/github.com/BUMPER/IssueDownloader/data/tf/apache.tf.wnet", "bug_apache_", []string{apacheProducts[i]}, []string{"1", "2", "3", "4"}, []string{"3"}, 500, 500000, false)
+	// 	//wordnet.IdfMap(pwd+"/src/github.com/BUMPER/IssueDownloader/data/tf/apache.tf.wnet", "bug_apache_", []string{apacheProducts[i]}, []string{"1", "2", "3", "4"}, []string{"4"}, 40, 120, false)
+	// 	// wordnet.IdfMap(pwd+"/src/github.com/BUMPER/IssueDownloader/data/tf/apache.tf.wnet", "bug_apache_", []string{apacheProducts[i]}, []string{"1", "2", "3", "4"}, []string{"3", "4"}, 40, 120, false)
 
-		// wordnet.IdfMap(pwd+"/src/github.com/BUMPER/IssueDownloader/data/tf/apache.tf.wnet", "bug_apache_", []string{apacheProducts[i]}, []string{"1", "2", "3", "4"}, []string{"4"}, 40, 120)
-	}
+	// 	// wordnet.IdfMap(pwd+"/src/github.com/BUMPER/IssueDownloader/data/tf/apache.tf.wnet", "bug_apache_", []string{apacheProducts[i]}, []string{"1", "2", "3", "4"}, []string{"4"}, 40, 120)
+	// }
 
-	for i := 0; i < len(netbeansProducts); i++ {
-		wordnet.IdfMap(pwd+"/src/github.com/BUMPER/IssueDownloader/data/tf/netbeans.tf.wnet", "bug_netbeans_", []string{netbeansProducts[i]}, []string{"1", "2", "3", "4"}, []string{"3"}, 500, 500000, false)
-		//wordnet.IdfMap(pwd+"/src/github.com/BUMPER/IssueDownloader/data/tf/netbeans.tf.wnet", "bug_netbeans_", []string{netbeansProducts[i]}, []string{"1", "2", "3", "4"}, []string{"4"}, 40, 120, false)
-		// wordnet.IdfMap(pwd+"/src/github.com/BUMPER/IssueDownloader/data/tf/netbeans.tf.wnet", "bug_netbeans_", []string{netbeansProducts[i]}, []string{"1", "2", "3", "4"}, []string{"3", "4"}, 40, 120, false)
-		// wordnet.IdfMap(pwd+"/src/github.com/BUMPER/IssueDownloader/data/tf/netbeans.tf.wnet", "bug_netbeans_", []string{netbeansProducts[i]}, []string{"1", "2", "3", "4"}, []string{"4"}, 40, 80)
-	}
+	// for i := 0; i < len(netbeansProducts); i++ {
+	// 	wordnet.IdfMap(pwd+"/src/github.com/BUMPER/IssueDownloader/data/tf/netbeans.tf.wnet", "bug_netbeans_", []string{netbeansProducts[i]}, []string{"1", "2", "3", "4"}, []string{"3"}, 500, 500000, false)
+	// 	//wordnet.IdfMap(pwd+"/src/github.com/BUMPER/IssueDownloader/data/tf/netbeans.tf.wnet", "bug_netbeans_", []string{netbeansProducts[i]}, []string{"1", "2", "3", "4"}, []string{"4"}, 40, 120, false)
+	// 	// wordnet.IdfMap(pwd+"/src/github.com/BUMPER/IssueDownloader/data/tf/netbeans.tf.wnet", "bug_netbeans_", []string{netbeansProducts[i]}, []string{"1", "2", "3", "4"}, []string{"3", "4"}, 40, 120, false)
+	// 	// wordnet.IdfMap(pwd+"/src/github.com/BUMPER/IssueDownloader/data/tf/netbeans.tf.wnet", "bug_netbeans_", []string{netbeansProducts[i]}, []string{"1", "2", "3", "4"}, []string{"4"}, 40, 80)
+	// }
 
 	//wordnet.IdfMap(pwd+"/src/github.com/BUMPER/IssueDownloader/data/tf/netbeans.tf.wnet", "bug_netbeans_")
 	//wordnet.IdfMap(pwd+"/src/github.com/BUMPER/IssueDownloader/data/tf/apache.tf.wnet", "bug_apache_")
