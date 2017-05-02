@@ -24,7 +24,8 @@ type Commit struct {
 	Classification          []string
 	Linked                  bool
 	ContainsBug             bool
-	Fixes                   []string
+	FixHashes               []string
+	FixReports              []string
 	Subsystems              int
 	Directories             int
 	Files                   int
@@ -73,12 +74,12 @@ func NewCommit(parentHashes []string, commitHash string, authorName string,
 	//Extracts the fixes w/ regards to regexFix
 	re := regexp.MustCompile(regexFix)
 	resultSlice := re.FindAllStringSubmatch(commit.CommitMessage, -1)
-	commit.Fixes = []string{}
+	commit.FixReports = []string{}
 	for index := 0; index < len(resultSlice); index++ {
 		if len(resultSlice[index]) == 4 {
-			commit.Fixes = append(commit.Fixes, resultSlice[index][3])
+			commit.FixReports = append(commit.FixReports, resultSlice[index][3])
 		} else if len(resultSlice[index]) == 2 {
-			commit.Fixes = append(commit.Fixes, resultSlice[index][1])
+			commit.FixReports = append(commit.FixReports, resultSlice[index][1])
 		}
 	}
 
@@ -92,9 +93,14 @@ func NewCommit(parentHashes []string, commitHash string, authorName string,
 		}
 	}
 
-	commit.Classification = classifier.GetInstance().Categorize(commit.CommitMessage)
+	//Compute the classification
+	if len(commit.FixReports) > 0 {
+		commit.Classification = []string{"corrective"}
+	} else {
+		commit.Classification = classifier.GetInstance().Categorize(commit.CommitMessage)
+	}
 
-	//Extract  info if required
+	//Extract P4 info if required
 	if isP4 {
 		re = regexp.MustCompile(`\[git-p4: depot-paths = "([a-zA-Z0-9/-_]+)": change = ([0-9]+)\]`)
 		resultSlice = re.FindAllStringSubmatch(commit.CommitMessage, -1)
@@ -123,7 +129,7 @@ func (c Commit) String() string {
 		"Classification: " + strings.Join(c.Classification, ",") + "\n" +
 		"Linked: " + strconv.FormatBool(c.Linked) + "\n" +
 		"ContainsBug: " + strconv.FormatBool(c.ContainsBug) + "\n" +
-		"Fixes: " + strings.Join(c.Fixes, ",") + "\n" +
+		"Fixes: " + strings.Join(c.FixHashes, ",") + "\n" +
 		"Subsystems: " + strconv.Itoa(c.Subsystems) + "\n" +
 		"Directories: " + strconv.Itoa(c.Directories) + "\n" +
 		"Files: " + strconv.Itoa(c.Files) + "\n" +

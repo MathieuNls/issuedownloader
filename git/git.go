@@ -3,11 +3,16 @@ package git
 import (
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 
+	"io/ioutil"
+
+	classifier "github.com/mathieunls/deepchange-downloader/classifiers"
 	_ "github.com/mathieunls/deepchange-downloader/pogo"
 )
 
@@ -247,33 +252,50 @@ func (git *CMD) commitStats(
 
 //Commits retuns all the commits of repoDir
 func (git *CMD) Commits(repoDir string, lastIngestedCommit string) []*Commit {
-
-	//Run git log
-	cmdArgs := []string{"log", "--numstat", "--reverse", git.logformat}
-
-	if lastIngestedCommit != "" {
-		cmdArgs = append(cmdArgs, fmt.Sprintf("%s..HEAD", lastIngestedCommit))
-	}
-
 	var cmdOut []byte
 	var err error
 
-	cmd := exec.Command("git", cmdArgs...)
-	cmd.Dir = repoDir
+	pwd, _ := os.Getwd()
 
-	if cmdOut, err = cmd.Output(); err != nil {
-		log.Panic("There was an error running git log command: ", err)
-		os.Exit(1)
+	// Log file already exists
+	if _, err = os.Stat(pwd + "/data/logs/" + filepath.Base(repoDir) + ".log"); err == nil {
+
+		fmt.Println("Found file", pwd+"/data/logs/"+filepath.Base(repoDir)+".log")
+		cmdOut, err = ioutil.ReadFile(pwd + "/data/logs/" + filepath.Base(repoDir) + ".log")
+
+		if err != nil {
+			panic(err)
+		}
+	} else {
+		//Run git log
+		cmdArgs := []string{"log", "--numstat", "--reverse", git.logformat}
+
+		if lastIngestedCommit != "" {
+			cmdArgs = append(cmdArgs, fmt.Sprintf("%s..HEAD", lastIngestedCommit))
+		}
+
+		cmd := exec.Command("git", cmdArgs...)
+		cmd.Dir = repoDir
+
+		if cmdOut, err = cmd.Output(); err != nil {
+			log.Panic("There was an error running git log command: ", err)
+			os.Exit(1)
+		}
+
 	}
 
 	commitFiles := make(map[string]commitFile)
 	devExp := make(map[string]devExperiences)
-
 	commitList := strings.Split(string(cmdOut), "BUMPER_STARTPRETTY")
 
 	commits := []*Commit{}
+	trueCorrectiveCommits := []*Commit{}
+	correctiveCommits := []*Commit{}
+	totalFixReports := 0
 
 	for index := 1; index < len(commitList); index++ {
+
+		fmt.Println(index)
 
 		prettyCommitSplit := strings.Split(commitList[index], "BUMPER_STOPPRETTY")
 		prettyCommit := prettyCommitSplit[0]
@@ -302,32 +324,265 @@ func (git *CMD) Commits(repoDir string, lastIngestedCommit string) []*Commit {
 			commit.AuthorDateUnixTimestamp,
 			commit)
 
-		fmt.Println(commit)
+		for _, classification := range commit.Classification {
+			if strings.Compare(classification, "corrective") == 0 {
+				if len(commit.Classification) == 1 {
+					trueCorrectiveCommits = append(trueCorrectiveCommits, commit)
+				} else {
+					correctiveCommits = append(correctiveCommits, commit)
+				}
+
+			}
+		}
+
+		totalFixReports += len(commit.FixReports)
 
 		commits = append(commits, commit)
 	}
 
+	fmt.Println("Commits:", len(commits))
+	fmt.Println("Pure Corrective Commits:", len(trueCorrectiveCommits))
+	fmt.Println("Corrective Commits:", len(correctiveCommits))
+	fmt.Println("Reports closed:", totalFixReports)
+
+	git.linkCorrectiveCommits(correctiveCommits, commits, repoDir)
+
 	return commits
 }
 
-func (git *CMD) linkCorrectiveCommit(commit Commit) []Commit {
+func (git *CMD) linkCorrectiveCommits(correctiveCommits []*Commit, allCommits []*Commit, repoDir string) {
 
-	return nil
+	linkedCommits := make(map[string][]string)
+
+	//goroutines  me https://gobyexample.com/mutexes
+
+	for _, correctiveCommit := range correctiveCommits {
+		regionChunks := git.getModifiedRegions(*correctiveCommit, repoDir)
+		bugIntroducingChanges := git.annotate(regionChunks, *correctiveCommit, repoDir)
+
+		for buggyCommit := range bugIntroducingChanges {
+
+			if _, present := linkedCommits[buggyCommit]; present {
+
+				linkedCommits[buggyCommit] = append(linkedCommits[buggyCommit], correctiveCommit.CommitHash)
+			} else {
+				linkedCommits[buggyCommit] = []string{correctiveCommit.CommitHash}
+			}
+		}
+		correctiveCommit.Linked = true
+	}
+
+	for _, commit := range allCommits {
+		if _, present := linkedCommits[commit.CommitHash]; present {
+			commit.ContainsBug = true
+			commit.FixHashes = linkedCommits[commit.CommitHash]
+		}
+	}
 }
 
-func (git *CMD) getModifiedRegions(commit Commit, repoDir string) []Commit {
+func (git *CMD) getModifiedRegions(commit Commit, repoDir string) map[string][]string {
 
-	diffCMD := "diff " + commit.CommitHash + "^ " + commit.CommitHash + " --unified=0 " +
-		" | while read; do echo \":BUMPER_START:$REPLY:BUMPER_END:\"; done"
+	cmdArgs := []string{
+		"git",
+		"diff",
+		commit.CommitHash + "^",
+		commit.CommitHash,
+		"--unified=0",
+		" | while",
+		"read; do echo \":BUMPER_DELIMITER_START:$REPLY:BUMPER_DELIMITER:\"; done",
+	}
 
-	cmd := exec.Command("git", diffCMD)
+	cmd := exec.Command("bash", "-c", strings.Join(cmdArgs, " "))
 	cmd.Dir = repoDir
 
-	if cmdOut, err := cmd.Output(); err != nil {
-		log.Panic("There was an error running git log command: ", err)
+	var diff []byte
+	var err error
+
+	if diff, err = cmd.Output(); err != nil {
+		log.Panic("There was an error running git diff command: ", err,
+			"--- bash ", "-c ", strings.Join(cmdArgs, " "), "at", repoDir)
 		os.Exit(1)
 	}
 
-	return nil
+	nameOnlyArgs := []string{
+		"diff",
+		commit.CommitHash + "^",
+		commit.CommitHash,
+		"--name-only",
+	}
 
+	cmd = exec.Command("git", nameOnlyArgs...)
+	cmd.Dir = repoDir
+
+	var filesModifiedOUT []byte
+	// get the files modified -> use this to validate if we have arrived at a new file
+	// when grepping for the specific lines changed.
+	if filesModifiedOUT, err = cmd.Output(); err != nil {
+		log.Println("There was an error running git diff command: ", err,
+			"--- git ", strings.Join(nameOnlyArgs, " "), " at", repoDir, "previous command was",
+			"--- bash ", "-c ", strings.Join(cmdArgs, " "), " at", repoDir)
+		// os.Exit(1)
+	} else {
+
+		filesModified := strings.Split(strings.Replace(string(filesModifiedOUT), "b'", "", -1), "\n")
+		return git.extractRegions(string(diff), filesModified)
+	}
+
+	return make(map[string][]string)
+}
+
+func (git *CMD) extractRegions(diff string, filesModified []string) map[string][]string {
+
+	var regionDiff = make(map[string][]string)
+
+	for _, file := range filesModified {
+
+		// weed out bad files/binary files/etc
+		if file != "'" && file != "" {
+			fileInfos := strings.Split(file, ".")
+
+			// get extentions
+			if len(fileInfos) > 1 {
+				fileExt := fileInfos[1]
+
+				// ensure these source code file endings
+				if classifier.GetInstance().IsCodeExtention(fileExt) {
+
+					regionDiff[file] = []string{}
+				}
+			}
+		}
+	}
+
+	//split all the different regions
+	var regions = strings.Split(diff, "diff --git")[1:]
+
+	for _, region := range regions {
+
+		//We begin by splitting on the beginning of double at characters, which gives us an array looking like this:
+		// [file info, line info {double at characters} modified code]
+		initialChunks := strings.Split(region, ":BUMPER_DELIMITER_START:@@")
+
+		//if a binary file it doesn't display the lines modified (a.k.a the 'line info {double at characters} modified code' part)
+		if len(initialChunks) == 1 {
+			continue
+		}
+
+		// file info is the first 'chunk', followed by the line_info {double at characters} modified code
+		fileInfo := initialChunks[0]
+		fileInfoSplit := strings.Split(fileInfo, " ")
+		//remove the 'a/ character'
+		fileName := fileInfoSplit[1][2:]
+
+		//it is possible there is a binary file being tracked or something we shouldn't care about
+		if _, present := regionDiff[fileName]; fileName == "" || !present {
+			continue
+		}
+
+		// Next, we must know the lines modified so that we can annotate. To do this, we must further split the chunks_initial.
+		// Specifically, we must seperate the line info from the code info. The second part of the initial chunk looks like
+		// -101,30, +202,33 {double at characters} code modified info. We can be pretty certain that the line info doesnt contain
+		// any at characters, so we can safely split the first set of doule at characters seen to divide this info up.
+
+		// Iterate through - as in one file we can multiple sections modified.
+		for _, chunk := range initialChunks[1:] {
+
+			// split only on the first occurance of the double at characters
+			codeInfoChunk := strings.Split(strings.Replace(chunk, "@@", "___%UNIQUE%___", 1), "___%UNIQUE%___")
+
+			//This now contains the -101,30 +102,30 part (info about the lines modified)
+			lineInfo := codeInfoChunk[0]
+			//This now contains the modified lines of code seperated by the delimiter we set
+			codeInfo := codeInfoChunk[1]
+
+			// As we only care about modified lines of code, we must ignore the +/additions as they do exist in previous versions
+			// and thus, we cannot even annotate them (they were added in this commit). So, we only care about the start where it was
+			// modified and we will have to study which lines where modified and keep track of them.
+
+			// remove clutter -> we only care about what line the modificatin started, first index is just empty
+			modLineInfo := strings.Split(lineInfo, " ")[1]
+			// remove clutter -> first line contains info on the class and last line irrelevant
+			modCodeInfo := strings.Split(strings.Replace(codeInfo, "\\n", "", -1), ":BUMPER_DELIMITER:")
+			modCodeInfo = modCodeInfo[1 : len(modCodeInfo)-1]
+
+			// make sure this is legitimate. expect modified line info to start with '-'
+			if modLineInfo[0] != '-' {
+				continue
+			}
+
+			//remove comma from mod_line_info as we only care about the start of the modification
+			if strings.Index(modLineInfo, ",") != -1 {
+				modLineInfo = modLineInfo[0:strings.Index(modLineInfo, ",")]
+			}
+
+			//remove the '-' in front of the line number by abs
+			currentLine, _ := strconv.ParseFloat(modLineInfo, 64)
+			currentLine = math.Abs(currentLine)
+
+			//now only use the code line changes that MODIFIES (not adds) in the diff
+			for _, section := range modCodeInfo {
+
+				// this line modifies or deletes a line of code
+				if strings.Index(section, ":BUMPER_DELIMITER_START:-") != -1 {
+
+					regionDiff[fileName] = append(regionDiff[fileName], strconv.FormatFloat(currentLine, 'f', 0, 64))
+
+					// we only increment modified lines of code because those lines did NOT exist
+					// in the previous commit!
+					currentLine++
+				}
+			}
+		}
+	}
+
+	return regionDiff
+}
+
+func (git *CMD) annotate(regionChunks map[string][]string, commit Commit, repoDir string) map[string]struct{} {
+
+	bugIntroducingChanges := make(map[string]struct{})
+
+	for file, lines := range regionChunks {
+
+		for _, line := range lines {
+
+			if line != "0" {
+
+				// files changed, this is used by the getLineNumbersChanged function
+				blameArgs := []string{
+					"cd",
+					repoDir,
+					"&&",
+					"git",
+					"blame", "-L" + line + ",+1",
+					commit.CommitHash + "^",
+					"-l",
+					"--",
+					"'" + file + "'",
+				}
+
+				cmd := exec.Command("bash", "-c", strings.Join(blameArgs, " "))
+				cmd.Dir = repoDir
+
+				var buggyChanges []byte
+				var err error
+
+				if buggyChanges, err = cmd.Output(); err != nil {
+					log.Panic("There was an error running git blame command: ", err, string(buggyChanges))
+					os.Exit(1)
+				}
+
+				//we need to git blame with the --follow option so that it follows renames in the file, and the '-l'
+				// option gives us the complete commit hash. additionally, start looking at the commit's ancestor
+				buggyChangesString := strings.Split(string(buggyChanges), " ")[0]
+
+				if _, present := bugIntroducingChanges[buggyChangesString]; !present {
+					bugIntroducingChanges[buggyChangesString] = struct{}{}
+				}
+
+			}
+		}
+	}
+
+	return bugIntroducingChanges
 }

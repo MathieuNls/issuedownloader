@@ -9,7 +9,7 @@ func main() {
 
 	gitCMD := git.New()
 
-	gitCMD.Commits("D:\\ace", "")
+	gitCMD.Commits("/home/math/E_DRIVE/ace", "")
 
 	// basePath := pwd + "/src/github.com/BUMPER/IssueDownloader/data/netbeans/"
 	// baseURL := "https://netbeans.org/bugzilla/show_bug.cgi?ctype=xml&id="
