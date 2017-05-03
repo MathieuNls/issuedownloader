@@ -354,7 +354,7 @@ func (git *CMD) linkCorrectiveCommits(correctiveCommits []*Commit, allCommits []
 
 	linkedCommits := make(map[string][]string)
 
-	//goroutines  me https://gobyexample.com/mutexes
+	//worker https://gobyexample.com/worker-pools
 
 	for _, correctiveCommit := range correctiveCommits {
 		regionChunks := git.getModifiedRegions(*correctiveCommit, repoDir)
