@@ -295,8 +295,6 @@ func (git *CMD) Commits(repoDir string, lastIngestedCommit string) []*Commit {
 
 	for index := 1; index < len(commitList); index++ {
 
-		fmt.Println(index)
-
 		prettyCommitSplit := strings.Split(commitList[index], "BUMPER_STOPPRETTY")
 		prettyCommit := prettyCommitSplit[0]
 		statsCommit := prettyCommitSplit[1]
@@ -350,34 +348,68 @@ func (git *CMD) Commits(repoDir string, lastIngestedCommit string) []*Commit {
 	return commits
 }
 
+//linkCorrectiveCommits tries to link fault commits with their fixes
 func (git *CMD) linkCorrectiveCommits(correctiveCommits []*Commit, allCommits []*Commit, repoDir string) {
 
+	//Parallel stuff
+	jobs := make(chan *Commit)
+	results := make(chan map[string][]string)
+
+	//Contains the result of the linking operations
+	//bug in hash -> introducted by hashes
 	linkedCommits := make(map[string][]string)
 
-	//worker https://gobyexample.com/worker-pools
-
-	for _, correctiveCommit := range correctiveCommits {
-		regionChunks := git.getModifiedRegions(*correctiveCommit, repoDir)
-		bugIntroducingChanges := git.annotate(regionChunks, *correctiveCommit, repoDir)
-
-		for buggyCommit := range bugIntroducingChanges {
-
-			if _, present := linkedCommits[buggyCommit]; present {
-
-				linkedCommits[buggyCommit] = append(linkedCommits[buggyCommit], correctiveCommit.CommitHash)
-			} else {
-				linkedCommits[buggyCommit] = []string{correctiveCommit.CommitHash}
-			}
-		}
-		correctiveCommit.Linked = true
+	//create worker to operate parrallel blames & annotates
+	//assumes that 12 copies are available
+	for w := 0; w < 12; w++ {
+		go git.linkerWorker(jobs, repoDir+"-bare-"+string(w), results)
 	}
 
+	//Feed our bug fixes to the workers
+	for i := 0; i < len(correctiveCommits); i++ {
+		jobs <- correctiveCommits[i]
+		fmt.Println(i, " sent")
+	}
+	close(jobs)
+
+	for i := 0; i < len(correctiveCommits); i++ {
+		for k, v := range <-results {
+			linkedCommits[k] = append(linkedCommits[k], v...)
+		}
+		fmt.Println(i, " received")
+	}
+
+	//Fix the state of bug introducing commit for future treatments
 	for _, commit := range allCommits {
 		if _, present := linkedCommits[commit.CommitHash]; present {
 			commit.ContainsBug = true
 			commit.FixHashes = linkedCommits[commit.CommitHash]
 		}
 	}
+}
+
+//linkerWorker is a worker that performs git blame/annotate and
+//updated the linkedCommit map
+func (git *CMD) linkerWorker(
+	correctiveCommits <-chan *Commit,
+	repoDir string,
+	results chan map[string][]string) {
+
+	linkedCommits := make(map[string][]string)
+
+	for correctiveCommit := range correctiveCommits {
+
+		regionChunks := git.getModifiedRegions(*correctiveCommit, repoDir)
+		bugIntroducingChanges := git.annotate(regionChunks, *correctiveCommit, repoDir)
+
+		for buggyCommit := range bugIntroducingChanges {
+
+			linkedCommits[buggyCommit] = append(linkedCommits[buggyCommit], correctiveCommit.CommitHash)
+		}
+		correctiveCommit.Linked = true
+	}
+
+	results <- linkedCommits
 }
 
 func (git *CMD) getModifiedRegions(commit Commit, repoDir string) map[string][]string {
@@ -398,9 +430,9 @@ func (git *CMD) getModifiedRegions(commit Commit, repoDir string) map[string][]s
 	var diff []byte
 	var err error
 
-	if diff, err = cmd.Output(); err != nil {
+	if diff, err = cmd.CombinedOutput(); err != nil {
 		log.Panic("There was an error running git diff command: ", err,
-			"--- bash ", "-c ", strings.Join(cmdArgs, " "), "at", repoDir)
+			"--- bash ", "-c ", strings.Join(cmdArgs, " "), "at", repoDir, string(diff))
 		os.Exit(1)
 	}
 
@@ -417,10 +449,10 @@ func (git *CMD) getModifiedRegions(commit Commit, repoDir string) map[string][]s
 	var filesModifiedOUT []byte
 	// get the files modified -> use this to validate if we have arrived at a new file
 	// when grepping for the specific lines changed.
-	if filesModifiedOUT, err = cmd.Output(); err != nil {
+	if filesModifiedOUT, err = cmd.CombinedOutput(); err != nil {
 		log.Println("There was an error running git diff command: ", err,
 			"--- git ", strings.Join(nameOnlyArgs, " "), " at", repoDir, "previous command was",
-			"--- bash ", "-c ", strings.Join(cmdArgs, " "), " at", repoDir)
+			"--- bash ", "-c ", strings.Join(cmdArgs, " "), " at", repoDir, string(filesModifiedOUT))
 		// os.Exit(1)
 	} else {
 
