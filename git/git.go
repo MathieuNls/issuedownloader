@@ -12,6 +12,8 @@ import (
 
 	"io/ioutil"
 
+	"sync"
+
 	classifier "github.com/mathieunls/deepchange-downloader/classifiers"
 	_ "github.com/mathieunls/deepchange-downloader/pogo"
 )
@@ -24,6 +26,7 @@ type CMD struct {
 	resetCMD          string
 	cleanCMD          string
 	headCommitHashCMD string
+	thread            int
 }
 
 // commitFile is an internal representation of
@@ -61,7 +64,7 @@ func New() *CMD {
 	//# f for force clean, d for untracked directories
 	g.cleanCMD = "git clean -df"
 	g.headCommitHashCMD = "git rev-parse HEAD"
-
+	g.thread = 12
 	return &g
 }
 
@@ -348,21 +351,56 @@ func (git *CMD) Commits(repoDir string, lastIngestedCommit string) []*Commit {
 	return commits
 }
 
+func (git *CMD) cloneRepo(from string, to string, bare bool) {
+
+	fmt.Println("Copying from", from, "to", to, "with bare =", bare)
+
+	cmdArgs := []string{"git", "clone"}
+
+	if bare {
+		cmdArgs = append(cmdArgs, "--bare")
+	}
+
+	cmdArgs = append(cmdArgs, from, to)
+
+	cmd := exec.Command("bash", "-c", strings.Join(cmdArgs, " "))
+	out, err := cmd.CombinedOutput()
+
+	fmt.Println(string(out))
+
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Println("Copy from", from, "to", to, " done.")
+}
+
 //linkCorrectiveCommits tries to link fault commits with their fixes
 func (git *CMD) linkCorrectiveCommits(correctiveCommits []*Commit, allCommits []*Commit, repoDir string) {
 
 	//Parallel stuff
 	jobs := make(chan *Commit)
 	results := make(chan map[string][]string)
+	wg := sync.WaitGroup{}
+	wg.Add(git.thread)
+
+	//Create git.thread copies of the repo
+	for w := 0; w < git.thread; w++ {
+		go func(workerId int) {
+
+			git.cloneRepo(repoDir, repoDir+"-bare-"+strconv.Itoa(workerId), true)
+			wg.Done()
+		}(w)
+	}
+	wg.Wait()
 
 	//Contains the result of the linking operations
 	//bug in hash -> introducted by hashes
 	linkedCommits := make(map[string][]string)
 
 	//create worker to operate parrallel blames & annotates
-	//assumes that 12 copies are available
-	for w := 0; w < 12; w++ {
-		go git.linkerWorker(jobs, repoDir+"-bare-"+string(w), results)
+	for w := 0; w < git.thread; w++ {
+		go git.linkerWorker(jobs, repoDir+"-bare-"+strconv.Itoa(w), results)
 	}
 
 	//Feed our bug fixes to the workers

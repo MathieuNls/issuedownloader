@@ -1,6 +1,7 @@
 package git
 
 import (
+	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
@@ -82,6 +83,8 @@ func NewCommit(parentHashes []string, commitHash string, authorName string,
 			commit.FixReports = append(commit.FixReports, resultSlice[index][1])
 		}
 	}
+
+	fmt.Println("Fixes", commit.FixReports)
 
 	//Extracts the reviewers w/ regards to regexReviewer
 	commit.Reviewers = []string{}

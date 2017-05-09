@@ -1,24 +1,27 @@
 package main
 
 import (
+	"fmt"
+
 	_ "github.com/go-sql-driver/mysql"
-	"github.com/mathieunls/deepchange-downloader/git"
+	"github.com/mathieunls/deepchange-downloader/jira"
 )
 
 func main() {
 
-	gitCMD := git.New()
+	// gitCMD := git.New()
 
-	gitCMD.Commits("/home/math/E_DRIVE/ace", "")
+	// gitCMD.Commits("/home/math/E_DRIVE/ace", "")
 
 	// basePath := pwd + "/src/github.com/BUMPER/IssueDownloader/data/netbeans/"
 	// baseURL := "https://netbeans.org/bugzilla/show_bug.cgi?ctype=xml&id="
-	// db, err := sql.Open("mysql", "root:root@tcp(192.168.0.112:3306)/taxo")
 
-	// if err != nil {
-	// 	fmt.Printf(err.Error())
-	// 	return
-	// }
+	if err != nil {
+		fmt.Printf(err.Error())
+		return
+	}
+
+	fmt.Println(jira.NewSQL(db, "RS", "129998", "jira25"))
 
 	// inFile, _ := os.Open(pwd + "/src/github.com/BUMPER/IssueDownloader/data/netbeans.csv")
 	// defer inFile.Close()
