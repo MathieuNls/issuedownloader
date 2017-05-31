@@ -63,24 +63,30 @@ func (s *classifierSingleton) IsCodeExtention(ext string) bool {
 	return false
 }
 
-func (s *classifierSingleton) Categorize(text string) []string {
+func (s *classifierSingleton) Categorize(text string) map[string]float64 {
 
-	cats := []string{}
+	cats := make(map[string]float64)
+	totalAmount := 0.0
 
 	for key, values := range s.categories {
 
 		words := strings.Fields(text)
+		amount := contains(words, values)
+		totalAmount += float64(amount)
+		cats[key] = float64(amount)
+	}
 
-		if contains(words, values) {
-			cats = append(cats, key)
-		}
-
+	for key := range s.categories {
+		cats[key] = cats[key] / totalAmount * 100.0
 	}
 
 	return cats
 }
 
-func contains(words []string, values []string) bool {
+func contains(words []string, values []string) int {
+
+	amount := 0
+
 	for i := 0; i < len(words); i++ {
 
 		for j := 0; j < len(values); j++ {
@@ -88,10 +94,10 @@ func contains(words []string, values []string) bool {
 			if strings.Index(strings.ToLower(words[i]),
 				strings.ToLower(values[j])) != -1 {
 
-				return true
+				amount++
 			}
 		}
 	}
 
-	return false
+	return amount
 }

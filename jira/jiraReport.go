@@ -5,31 +5,57 @@ import (
 	"log"
 	"time"
 
+	"strings"
+
 	"github.com/mathieunls/deepchange-downloader/pogo"
 )
 
-// Report represents a bugzilla bug
+// Report represents a jira bug
 type Report struct {
-	pogo.GenericReport
-	ID          string    `xml:"key"`
-	Date        string    `xml:"created"`
-	DateClosed  string    `xml:"closed"`
-	Type        string    `xml:"type"`
-	Title       string    `xml:"title"`
-	Product     string    `xml:"project"`
-	Version     string    `xml:"version"`
-	Severity    string    `xml:"priority"`
-	Reporter    string    `xml:"reporter"`
-	Assignee    string    `xml:"assignee"`
-	Description string    `xml:"description"`
-	Comments    []Comment `xml:"comments>comment"`
+	pogo.ReportAttributes
+	Comments []*Comment
 }
+
+//MySQLJiraLinker links Jira report based on MYSQL cnx
+type MySQLJiraLinker struct {
+	Db           *sql.DB
+	ProjectKey   string
+	DatabaseName string
+}
+
+//XMLJiraLinker links Jira report based on XML API
+type XMLJiraLinker struct {
+	filePath string
+	url      string
+}
+
+//Fetch fetches a report using mysql
+//It expects ids to look like ACE-234430
+func (linker *MySQLJiraLinker) Fetch(id string) (pogo.Report, error) {
+
+	id = strings.Split(id, "-")[1]
+
+	report, err := NewSQL(linker.Db, linker.ProjectKey, id, linker.DatabaseName)
+
+	return report, err
+}
+
+func (linker *MySQLJiraLinker) DBName() string {
+	return linker.DatabaseName
+}
+
+func (report *Report) Attributes() *pogo.ReportAttributes {
+	return &report.ReportAttributes
+}
+
+// func (linker *XMLJiraLinker) Fetch(id string) (*Report, error) {
+
+// 	return NewXML(linker.filePath, linker.url+id)
+// }
 
 // NewSQL fetches information from a SQL database
 func NewSQL(db *sql.DB, projectKey string, id string, databaseName string) (*Report, error) {
 	r := Report{}
-	r.ID = ""
-	r.GenericReport = pogo.GenericReport{}
 
 	rows, err := db.Query(`SELECT 
 		jiraissue.ID AS ID,
@@ -70,16 +96,16 @@ func NewSQL(db *sql.DB, projectKey string, id string, databaseName string) (*Rep
 			REPORTER       string
 			ASSIGNEE       string
 			SUMMARY        string
-			DESCRIPTION    string
-			PRIORITY       string
+			DESCRIPTION    sql.NullString
+			PRIORITY       sql.NullString
 			CREATED        string
 			UPDATED        string
 			RESOLUTIONDATE string
 			EXTERNALID     string
 			ISSUETYPE      string
-			COMMENTAUTHOR  string
-			COMMENTDATE    string
-			COMMENT        string
+			COMMENTAUTHOR  sql.NullString
+			COMMENTDATE    sql.NullString
+			COMMENT        sql.NullString
 		)
 
 		err := rows.Scan(
@@ -99,25 +125,27 @@ func NewSQL(db *sql.DB, projectKey string, id string, databaseName string) (*Rep
 			&COMMENT)
 
 		if err != nil {
-			log.Fatal(err)
+			panic(err)
 		}
 
-		if r.ID == "" {
-			r.ID = ID
+		if r.ExternalID == "" {
+			r.ExternalID = databaseName + "_" + id
 			r.Reporter = REPORTER
 			r.Assignee = ASSIGNEE
 			r.Title = SUMMARY
-			r.Description = DESCRIPTION
-			r.Severity = PRIORITY
+			r.Description = DESCRIPTION.String
+			r.Severity = PRIORITY.String
 			r.Date = CREATED
 			r.DateClosed = RESOLUTIONDATE
 			r.Type = ISSUETYPE
-		}
+		} else {
+			attr := pogo.CommentAttribut{
+				Commenter: COMMENTAUTHOR.String,
+				Date:      COMMENTDATE.String,
+				Text:      COMMENT.String}
 
-		r.Comments = append(r.Comments, Comment{
-			Commenter: COMMENTAUTHOR,
-			Date:      COMMENTDATE,
-			Text:      COMMENT})
+			r.ReportAttributes.Comments = append(r.ReportAttributes.Comments, attr)
+		}
 
 	}
 	err = rows.Err()
@@ -128,21 +156,24 @@ func NewSQL(db *sql.DB, projectKey string, id string, databaseName string) (*Rep
 	return &r, nil
 }
 
-// NewXML parses an XML file from a bugzilla system
-func NewXML(filePath string, url string) (*Report, error) {
-	r := Report{}
-	r.GenericReport = pogo.GenericReport{FilePath: filePath, Url: url}
-	r.DownloadFile()
-	r.ParseXML("item", &r)
-	r.GenericReport.AllText = func() string {
-		return r.AllText(24)
-	}
-	r.GenericReport.ID = r.ID
-	r.GenericReport.Product = r.Product
-	return &r, nil
-}
+// NewXML parses an XML file from a jira system
+// func NewXML(filePath string, url string) (*Report, error) {
+// 	r := Report{}
+// 	r.GenericReport = pogo.GenericReport{FilePath: filePath, Url: url}
+// 	r.DownloadFile()
+// 	r.ParseXML("item", &r)
+// 	r.GenericReport.AllText = func() string {
+// 		return r.AllText(24)
+// 	}
 
-func (report Report) AllText(hours float64) string {
+// 	intID, _ := strconv.Atoi(r.ID)
+// 	r.GenericReport.ID = int64(intID)
+// 	r.GenericReport.Product = r.Product
+// 	return &r, nil
+// }
+
+//AllText returns all the text from the report `hours` after openning
+func (report *Report) AllText(hours float64) string {
 
 	str := report.Title + " " + report.Description
 
@@ -160,9 +191,9 @@ func (report Report) AllText(hours float64) string {
 	return str
 }
 
-func (report Report) String() string {
-	var str = "{ID=" + report.ID + "}\n" +
-		"{Date=" + report.Date + "}\n" +
+//String returns a string representation
+func (report *Report) String() string {
+	var str = "{Date=" + report.Date + "}\n" +
 		"{Title=" + report.Title + "}\n" +
 		"{Product=" + report.Product + "}\n" +
 		"{Version=" + report.Version + "}\n" +
@@ -173,11 +204,7 @@ func (report Report) String() string {
 
 	for index := 0; index < len(report.Comments); index++ {
 
-		str += "\n{COMMENT={\n" +
-			"\t {Commenter=" + report.Comments[index].Commenter + "}\n" +
-			"\t {Date=" + report.Comments[index].Date + "}\n" +
-			"\t {Text=" + report.Comments[index].Text + "}\n" +
-			"}\n"
+		str += report.Comments[index].String()
 	}
 
 	return str

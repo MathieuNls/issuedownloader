@@ -1,6 +1,7 @@
 package pogo
 
-// Comment represents a comment in a bug report
-type Comment interface {
-	String() string
+type CommentAttribut struct {
+	Commenter string
+	Date      string
+	Text      string
 }

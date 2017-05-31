@@ -32,24 +32,32 @@ func ExtractUniqWords(text string) map[string]float32 {
 }
 
 //ExtractUniqGrams retuns a weighted hashmap of grams without stopwords
-func ExtractUniqGrams(text string, grams int) map[string]float32{
-//	fmt.Println("dbPrefix", text)	
+func ExtractUniqGrams(text string, grams int) map[string]int {
+
 	words := strings.Fields(strings.ToLower(sanitize.HTML(removePunctuation(text))))
-//	fmt.Println("dbPrefix", words)
+	var wordsWithoutStops []string
+	for _, word := range words {
+		if !stopwords.Has(word) {
+			wordsWithoutStops = append(wordsWithoutStops, word)
+		}
+	}
+
 	m := make(map[string]int)
-	
-	for index := 0; index < len(words) - grams; index++{
+
+	for index := 0; index < len(wordsWithoutStops)-grams; index++ {
 
 		word := ""
 
-		for gram := 0; gram < grams; gram++{
-			word = word + " " + nlp.Stem(words[index + gram])
+		for gram := 0; gram < grams; gram++ {
+			word = word + " " + nlp.Stem(wordsWithoutStops[index+gram])
 		}
+
+		m[word]++
 
 		m = updateMap(m, word)
 	}
 
-	return tfMap(m, len(words))
+	return m
 }
 
 func tfMap(m map[string]int, count int) map[string]float32 {

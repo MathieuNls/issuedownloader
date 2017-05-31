@@ -6,7 +6,6 @@ import (
 	"math"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -15,7 +14,9 @@ import (
 	"sync"
 
 	classifier "github.com/mathieunls/deepchange-downloader/classifiers"
-	_ "github.com/mathieunls/deepchange-downloader/pogo"
+	"github.com/mathieunls/deepchange-downloader/jira"
+	"github.com/mathieunls/deepchange-downloader/persistence"
+	"github.com/mathieunls/deepchange-downloader/pogo"
 )
 
 // CMD is an abstraction of diverse git commands
@@ -26,7 +27,9 @@ type CMD struct {
 	resetCMD          string
 	cleanCMD          string
 	headCommitHashCMD string
-	thread            int
+	Threads           int
+	ReportLinker      pogo.ReportLinker
+	DBAdaptor         persistence.DBAdaptor
 }
 
 // commitFile is an internal representation of
@@ -64,7 +67,9 @@ func New() *CMD {
 	//# f for force clean, d for untracked directories
 	g.cleanCMD = "git clean -df"
 	g.headCommitHashCMD = "git rev-parse HEAD"
-	g.thread = 12
+	g.Threads = 12
+	g.ReportLinker = nil
+	g.DBAdaptor = nil
 	return &g
 }
 
@@ -86,7 +91,7 @@ func (git *CMD) commitStats(
 	//The timestamp (i.e. 1406214540)
 	unixTimeStamp int,
 	//A pointer to the commit to update
-	commit *Commit) {
+	commit *pogo.Commit) {
 
 	//Following maps keep references of known authors,
 	//subsystems, directories and files; respectively.
@@ -254,17 +259,28 @@ func (git *CMD) commitStats(
 }
 
 //Commits retuns all the commits of repoDir
-func (git *CMD) Commits(repoDir string, lastIngestedCommit string) []*Commit {
+func (git *CMD) Commits(
+	repoDir string,
+	repoName string,
+	lastIngestedCommit string,
+	workingDir string,
+	repositoryID int) ([]*pogo.Commit, []*pogo.Commit) {
+
 	var cmdOut []byte
 	var err error
 
-	pwd, _ := os.Getwd()
+	if repoDir != workingDir {
+		fmt.Println("workingDir + repoName", workingDir+repoName)
+		if _, err = os.Stat(workingDir + repoName); err != nil {
+			git.cloneRepo(repoDir+repoName, workingDir+repoName, true)
+		}
+	}
 
 	// Log file already exists
-	if _, err = os.Stat(pwd + "/data/logs/" + filepath.Base(repoDir) + ".log"); err == nil {
+	if _, err = os.Stat(workingDir + "logs/" + repoName + ".log"); err == nil {
 
-		fmt.Println("Found file", pwd+"/data/logs/"+filepath.Base(repoDir)+".log")
-		cmdOut, err = ioutil.ReadFile(pwd + "/data/logs/" + filepath.Base(repoDir) + ".log")
+		fmt.Println("Found file", workingDir+"/logs/"+repoName+".log")
+		cmdOut, err = ioutil.ReadFile(workingDir + "/logs/" + repoName + ".log")
 
 		if err != nil {
 			panic(err)
@@ -277,13 +293,18 @@ func (git *CMD) Commits(repoDir string, lastIngestedCommit string) []*Commit {
 			cmdArgs = append(cmdArgs, fmt.Sprintf("%s..HEAD", lastIngestedCommit))
 		}
 
+		cmdArgs = append(cmdArgs, "> "+workingDir+"/logs/"+repoName+".log")
+
 		cmd := exec.Command("git", cmdArgs...)
-		cmd.Dir = repoDir
+		cmd.Dir = workingDir
 
 		if cmdOut, err = cmd.Output(); err != nil {
 			log.Panic("There was an error running git log command: ", err)
 			os.Exit(1)
 		}
+
+		//Restart this we the outputed log file
+		git.Commits(repoDir, repoName, lastIngestedCommit, workingDir, repositoryID)
 
 	}
 
@@ -291,10 +312,15 @@ func (git *CMD) Commits(repoDir string, lastIngestedCommit string) []*Commit {
 	devExp := make(map[string]devExperiences)
 	commitList := strings.Split(string(cmdOut), "BUMPER_STARTPRETTY")
 
-	commits := []*Commit{}
-	trueCorrectiveCommits := []*Commit{}
-	correctiveCommits := []*Commit{}
+	commits := []*pogo.Commit{}
+	trueCorrectiveCommits := []*pogo.Commit{}
+	correctiveCommits := []*pogo.Commit{}
 	totalFixReports := 0
+	syncEnable := false
+
+	if strings.Compare("", lastIngestedCommit) == 0 {
+		syncEnable = true
+	}
 
 	for index := 1; index < len(commitList); index++ {
 
@@ -304,7 +330,7 @@ func (git *CMD) Commits(repoDir string, lastIngestedCommit string) []*Commit {
 
 		prettyCommitDetails := strings.Split(prettyCommit, " BUMPER_DELIMITER2")
 
-		commit := NewCommit(
+		commit := pogo.NewCommit(
 			strings.Split(prettyCommitDetails[0], " "),
 			strings.Trim(prettyCommitDetails[1], " "),
 			strings.Trim(prettyCommitDetails[2], " "),
@@ -314,7 +340,8 @@ func (git *CMD) Commits(repoDir string, lastIngestedCommit string) []*Commit {
 			strings.Trim(prettyCommitDetails[6], " "),
 			`@fix(ed\()?( )?([a-zA-Z-]+[0-9]+)`,
 			`@review\(([a-z,]+)\)`,
-			true)
+			true,
+			repositoryID)
 
 		stats := strings.Split(statsCommit, "\n")
 		git.commitStats(
@@ -325,19 +352,26 @@ func (git *CMD) Commits(repoDir string, lastIngestedCommit string) []*Commit {
 			commit.AuthorDateUnixTimestamp,
 			commit)
 
-		for _, classification := range commit.Classification {
-			if strings.Compare(classification, "corrective") == 0 {
-				if len(commit.Classification) == 1 {
-					trueCorrectiveCommits = append(trueCorrectiveCommits, commit)
-				} else {
-					correctiveCommits = append(correctiveCommits, commit)
-				}
-
+		if _, present := commit.Classification["corrective"]; present {
+			if commit.Classification["corrective"] == 100.0 && len(commit.Classification) == 1 {
+				trueCorrectiveCommits = append(trueCorrectiveCommits, commit)
+			} else if commit.Classification["corrective"] > 0.0 {
+				correctiveCommits = append(correctiveCommits, commit)
 			}
 		}
 
-		totalFixReports += len(commit.FixReports)
+		if git.DBAdaptor != nil && syncEnable {
 
+			git.DBAdaptor.SyncCommit(commit)
+		} else {
+			fmt.Println("Skipping", commit.CommitHash)
+		}
+
+		if strings.Compare(commit.CommitHash, lastIngestedCommit) == 0 {
+			syncEnable = true
+		}
+
+		totalFixReports += len(commit.FixReportIDs)
 		commits = append(commits, commit)
 	}
 
@@ -346,11 +380,10 @@ func (git *CMD) Commits(repoDir string, lastIngestedCommit string) []*Commit {
 	fmt.Println("Corrective Commits:", len(correctiveCommits))
 	fmt.Println("Reports closed:", totalFixReports)
 
-	git.linkCorrectiveCommits(correctiveCommits, commits, repoDir)
-
-	return commits
+	return commits, trueCorrectiveCommits
 }
 
+//clone a repo
 func (git *CMD) cloneRepo(from string, to string, bare bool) {
 
 	fmt.Println("Copying from", from, "to", to, "with bare =", bare)
@@ -361,12 +394,19 @@ func (git *CMD) cloneRepo(from string, to string, bare bool) {
 		cmdArgs = append(cmdArgs, "--bare")
 	}
 
-	cmdArgs = append(cmdArgs, from, to)
+	/*
+		core.preloadindex
+		Enable parallel index preload for operations like git diff
+		This can speed up operations like git diff and git status
+		especially on filesystems like NFS that have weak caching semantics
+		and thus relatively high IO latencies. With this set to true,
+		git will do the index comparison to the filesystem data in parallel,
+		allowing overlapping IO's.
+	*/
+	cmdArgs = append(cmdArgs, from, to, "&& cd", from, "&& git config core.preloadindex true")
 
 	cmd := exec.Command("bash", "-c", strings.Join(cmdArgs, " "))
-	out, err := cmd.CombinedOutput()
-
-	fmt.Println(string(out))
+	_, err := cmd.CombinedOutput()
 
 	if err != nil {
 		panic(err)
@@ -375,17 +415,25 @@ func (git *CMD) cloneRepo(from string, to string, bare bool) {
 	fmt.Println("Copy from", from, "to", to, " done.")
 }
 
-//linkCorrectiveCommits tries to link fault commits with their fixes
-func (git *CMD) linkCorrectiveCommits(correctiveCommits []*Commit, allCommits []*Commit, repoDir string) {
+type commitChan struct {
+	Commit *pogo.Commit
+	ID     int
+}
+
+//LinkCorrectiveCommits tries to link fault commits with their fixes
+func (git *CMD) LinkCorrectiveCommits(
+	correctiveCommits []*pogo.Commit,
+	allCommits []*pogo.Commit, repoDir string,
+	logDir string, repoID int) {
 
 	//Parallel stuff
-	jobs := make(chan *Commit)
+	jobs := make(chan commitChan, len(correctiveCommits))
 	results := make(chan map[string][]string)
 	wg := sync.WaitGroup{}
-	wg.Add(git.thread)
+	wg.Add(git.Threads)
 
-	//Create git.thread copies of the repo
-	for w := 0; w < git.thread; w++ {
+	//Create git.Threads copies of the repo
+	for w := 0; w < git.Threads; w++ {
 		go func(workerId int) {
 
 			git.cloneRepo(repoDir, repoDir+"-bare-"+strconv.Itoa(workerId), true)
@@ -399,108 +447,221 @@ func (git *CMD) linkCorrectiveCommits(correctiveCommits []*Commit, allCommits []
 	linkedCommits := make(map[string][]string)
 
 	//create worker to operate parrallel blames & annotates
-	for w := 0; w < git.thread; w++ {
-		go git.linkerWorker(jobs, repoDir+"-bare-"+strconv.Itoa(w), results)
+	for w := 0; w < git.Threads; w++ {
+		go git.linkerWorker(jobs, repoDir+"-bare-"+strconv.Itoa(w), results, w, len(correctiveCommits), logDir, repoID)
+		fmt.Println("creating worker", w)
 	}
 
 	//Feed our bug fixes to the workers
 	for i := 0; i < len(correctiveCommits); i++ {
-		jobs <- correctiveCommits[i]
-		fmt.Println(i, " sent")
+		jobs <- commitChan{correctiveCommits[i], i}
 	}
 	close(jobs)
 
 	for i := 0; i < len(correctiveCommits); i++ {
+		fmt.Println("received", i)
+
 		for k, v := range <-results {
 			linkedCommits[k] = append(linkedCommits[k], v...)
 		}
-		fmt.Println(i, " received")
 	}
 
-	//Fix the state of bug introducing commit for future treatments
 	for _, commit := range allCommits {
 		if _, present := linkedCommits[commit.CommitHash]; present {
 			commit.ContainsBug = true
 			commit.FixHashes = linkedCommits[commit.CommitHash]
+			if git.DBAdaptor != nil {
+				git.DBAdaptor.IsBuggy(commit, repoID)
+			}
 		}
 	}
+
+	//Delete the repos, no need to wait for complete deletion here
+	for w := 0; w < git.Threads; w++ {
+		go func(workerId int) {
+
+			cmd := exec.Command("rm", "-r", repoDir+"-bare-"+strconv.Itoa(workerId))
+			_, err := cmd.CombinedOutput()
+
+			if err != nil {
+				panic(err)
+			}
+			fmt.Println("deleting repo", repoDir+"-bare-"+strconv.Itoa(workerId))
+			wg.Done()
+		}(w)
+	}
+
 }
 
 //linkerWorker is a worker that performs git blame/annotate and
 //updated the linkedCommit map
 func (git *CMD) linkerWorker(
-	correctiveCommits <-chan *Commit,
+	correctiveCommits <-chan commitChan,
 	repoDir string,
-	results chan map[string][]string) {
-
-	linkedCommits := make(map[string][]string)
+	results chan map[string][]string,
+	id int,
+	total int,
+	logDir string,
+	repoID int) {
 
 	for correctiveCommit := range correctiveCommits {
 
-		regionChunks := git.getModifiedRegions(*correctiveCommit, repoDir)
-		bugIntroducingChanges := git.annotate(regionChunks, *correctiveCommit, repoDir)
+		wg := sync.WaitGroup{}
+		wg.Add(2)
 
-		for buggyCommit := range bugIntroducingChanges {
+		linkedCommits := make(map[string][]string)
 
-			linkedCommits[buggyCommit] = append(linkedCommits[buggyCommit], correctiveCommit.CommitHash)
-		}
-		correctiveCommit.Linked = true
+		//First thread to blame the corrective commit
+		go func(localWg *sync.WaitGroup, commit *pogo.Commit) {
+
+			regionChunks := git.getModifiedRegions(commit, repoDir, logDir)
+			bugIntroducingChanges := git.annotate(regionChunks, commit, repoDir, logDir)
+
+			for buggyCommit := range bugIntroducingChanges {
+
+				linkedCommits[buggyCommit] = append(linkedCommits[buggyCommit], commit.CommitHash)
+			}
+			commit.Linked = true
+			if git.DBAdaptor != nil {
+				git.DBAdaptor.IsLinked(commit, repoID)
+			}
+			localWg.Done()
+		}(&wg, correctiveCommit.Commit)
+
+		//Second thread to fetch fixed reports
+		go func(localWg *sync.WaitGroup, commit *pogo.Commit) {
+
+			//Do we have a report linker ?
+			if git.ReportLinker != nil {
+
+				var pogoReport pogo.Report
+				var err error
+
+				//Ids are extracted at commit instantiation
+				for _, reportID := range commit.FixReportIDs {
+
+					//Do we have that report in cache ?
+					if report := persistence.GetCacheInstance().
+						Fetch("report", git.ReportLinker.DBName()+"_"+reportID); report != nil {
+						fmt.Println("Cache hit report")
+						pogoReport = &jira.Report{ReportAttributes: report.(pogo.ReportAttributes)}
+					} else {
+						pogoReport, err = git.ReportLinker.Fetch(reportID)
+
+						if err != nil {
+							log.Panic(err, correctiveCommit, reportID)
+						}
+					}
+
+					commit.FixReports = append(commit.FixReports, pogoReport)
+				}
+			}
+
+			//Do we have a db adapotor sync reports ?
+			if git.DBAdaptor != nil {
+				git.DBAdaptor.SyncReports(commit.FixReports, commit.RepositoryID, commit.CommitHash)
+			}
+
+			localWg.Done()
+		}(&wg, correctiveCommit.Commit)
+
+		wg.Wait()
+
+		results <- linkedCommits
+		fmt.Println("worker", id, "/", git.Threads, "finished job", correctiveCommit.ID, "/", total, float64(correctiveCommit.ID)/float64(total)*100, "%")
+
 	}
 
-	results <- linkedCommits
 }
 
-func (git *CMD) getModifiedRegions(commit Commit, repoDir string) map[string][]string {
-
-	cmdArgs := []string{
-		"git",
-		"diff",
-		commit.CommitHash + "^",
-		commit.CommitHash,
-		"--unified=0",
-		" | while",
-		"read; do echo \":BUMPER_DELIMITER_START:$REPLY:BUMPER_DELIMITER:\"; done",
-	}
-
-	cmd := exec.Command("bash", "-c", strings.Join(cmdArgs, " "))
-	cmd.Dir = repoDir
+//  getModifiedRegions returns the list of regions that were modified/deleted between this commit and its ancester.
+// a region is simply the file and the loc in it that were modified.
+func (git *CMD) getModifiedRegions(commit *pogo.Commit, repoDir string, logDir string) map[string][]string {
 
 	var diff []byte
-	var err error
-
-	if diff, err = cmd.CombinedOutput(); err != nil {
-		log.Panic("There was an error running git diff command: ", err,
-			"--- bash ", "-c ", strings.Join(cmdArgs, " "), "at", repoDir, string(diff))
-		os.Exit(1)
-	}
-
-	nameOnlyArgs := []string{
-		"diff",
-		commit.CommitHash + "^",
-		commit.CommitHash,
-		"--name-only",
-	}
-
-	cmd = exec.Command("git", nameOnlyArgs...)
-	cmd.Dir = repoDir
-
 	var filesModifiedOUT []byte
-	// get the files modified -> use this to validate if we have arrived at a new file
-	// when grepping for the specific lines changed.
-	if filesModifiedOUT, err = cmd.CombinedOutput(); err != nil {
-		log.Println("There was an error running git diff command: ", err,
-			"--- git ", strings.Join(nameOnlyArgs, " "), " at", repoDir, "previous command was",
-			"--- bash ", "-c ", strings.Join(cmdArgs, " "), " at", repoDir, string(filesModifiedOUT))
-		// os.Exit(1)
-	} else {
+	var err error
+	var cmdArgs []string
 
-		filesModified := strings.Split(strings.Replace(string(filesModifiedOUT), "b'", "", -1), "\n")
-		return git.extractRegions(string(diff), filesModified)
+	diffID := "diff_" + commit.CommitHash + "^" + commit.CommitHash
+	filesModifiedDiffID := "file_modified_diff_" + commit.CommitHash + "^" + commit.CommitHash
+
+	if cachedDiffed := persistence.GetCacheInstance().
+		Fetch("diff", diffID); cachedDiffed != nil {
+		diff = cachedDiffed.([]byte)
+	} else {
+		cmdArgs = []string{
+			"git",
+			"diff",
+			commit.CommitHash + "^",
+			commit.CommitHash,
+			"--unified=0",
+			" | while",
+			"read; do echo \":BUMPER_DELIMITER_START:$REPLY:BUMPER_DELIMITER:\"; done",
+			"> " + logDir + diffID,
+			"&& cat " + logDir + diffID,
+		}
+
+		cmd := exec.Command("bash", "-c", strings.Join(cmdArgs, " "))
+		cmd.Dir = repoDir
+
+		if diff, err = cmd.CombinedOutput(); err != nil {
+			log.Panic("There was an error running git diff command: ", err,
+				"--- bash ", "-c ", strings.Join(cmdArgs, " "), "at", repoDir, string(diff))
+		} else {
+			persistence.GetCacheInstance().
+				Put("diff", diffID, diff)
+		}
 	}
 
-	return make(map[string][]string)
+	if cachedDiffed := persistence.GetCacheInstance().
+		Fetch("file_modified_diff", filesModifiedDiffID); cachedDiffed != nil {
+		filesModifiedOUT = cachedDiffed.([]byte)
+	} else {
+		nameOnlyArgs := []string{
+			"git",
+			"diff",
+			commit.CommitHash + "^",
+			commit.CommitHash,
+			"--name-only",
+			"> " + logDir + filesModifiedDiffID,
+			"&& cat " + logDir + filesModifiedDiffID,
+		}
+
+		cmd := exec.Command("bash", "-c", strings.Join(nameOnlyArgs, " "))
+		cmd.Dir = repoDir
+
+		// get the files modified -> use this to validate if we have arrived at a new file
+		// when grepping for the specific lines changed.
+		if filesModifiedOUT, err = cmd.CombinedOutput(); err != nil {
+			log.Println("There was an error running git diff command: ", err,
+				"--- git ", strings.Join(nameOnlyArgs, " "), " at", repoDir, "previous command was",
+				"--- bash ", "-c ", strings.Join(cmdArgs, " "), " at", repoDir, string(filesModifiedOUT))
+			// os.Exit(1)
+		} else {
+
+			persistence.GetCacheInstance().
+				Put("file_modified_diff", filesModifiedDiffID, diff)
+		}
+
+	}
+
+	filesModified := strings.Split(strings.Replace(string(filesModifiedOUT), "b'", "", -1), "\n")
+
+	if err != nil {
+		return make(map[string][]string)
+	}
+
+	return git.extractRegions(string(diff), filesModified)
 }
 
+//  extractRegions returns a dict of file -> list of line numbers modified. helper function for getModifiedRegions
+//  git diff doesn't provide a clean way of simply getting the specific lines that were modified, so we are doing so here
+//  manually. A possible refactor in the future may be to use an external diff tool, so that this implementation
+//  wouldn't be scm (git) specific
+//  if a file was merely deleted, then there was no chunk or region changed but we do capture the file.
+//  however, we do not assume this is a location of a buy
+//  modified means modified or deleted -- not added! We assume are lines of code modified is the location of a bug.
 func (git *CMD) extractRegions(diff string, filesModified []string) map[string][]string {
 
 	var regionDiff = make(map[string][]string)
@@ -608,7 +769,13 @@ func (git *CMD) extractRegions(diff string, filesModified []string) map[string][
 	return regionDiff
 }
 
-func (git *CMD) annotate(regionChunks map[string][]string, commit Commit, repoDir string) map[string]struct{} {
+// annotate tracks down the origin of the deleted/modified loc in the regions dict using
+// the git annotate (now called git blame) feature of git and a list of commit
+// hashes of the most recent revision in which the line identified by the regions
+// was modified. these discovered commits are identified as bug-introducing changes.
+// git blame command is set up to start looking back starting from the commit BEFORE the
+// commit that was passed in. this is because a bug MUST have occured prior to this commit.
+func (git *CMD) annotate(regionChunks map[string][]string, commit *pogo.Commit, repoDir string, logDir string) map[string]struct{} {
 
 	bugIntroducingChanges := make(map[string]struct{})
 
@@ -618,28 +785,41 @@ func (git *CMD) annotate(regionChunks map[string][]string, commit Commit, repoDi
 
 			if line != "0" {
 
-				// files changed, this is used by the getLineNumbersChanged function
-				blameArgs := []string{
-					"cd",
-					repoDir,
-					"&&",
-					"git",
-					"blame", "-L" + line + ",+1",
-					commit.CommitHash + "^",
-					"-l",
-					"--",
-					"'" + file + "'",
-				}
-
-				cmd := exec.Command("bash", "-c", strings.Join(blameArgs, " "))
-				cmd.Dir = repoDir
-
 				var buggyChanges []byte
 				var err error
+				blameID := "blame_" + line + "_" + commit.CommitHash + "_" + strings.Replace(file, "/", "--", -1)
 
-				if buggyChanges, err = cmd.Output(); err != nil {
-					log.Panic("There was an error running git blame command: ", err, string(buggyChanges))
-					os.Exit(1)
+				if cachedBlame := persistence.GetCacheInstance().
+					Fetch("blame", blameID); cachedBlame != nil {
+					buggyChanges = cachedBlame.([]byte)
+				} else {
+
+					// files changed, this is used by the getLineNumbersChanged function
+					blameArgs := []string{
+						"cd",
+						repoDir,
+						"&&",
+						"git",
+						"blame", "-L" + line + ",+1",
+						commit.CommitHash + "^",
+						"-l",
+						"--",
+						"'" + file + "'",
+						"> " + logDir + blameID,
+						"&& cat " + logDir + blameID,
+					}
+
+					cmd := exec.Command("bash", "-c", strings.Join(blameArgs, " "))
+					cmd.Dir = repoDir
+
+					if buggyChanges, err = cmd.CombinedOutput(); err != nil {
+						log.Panic("There was an error running git blame command: ", "bash -c", strings.Join(blameArgs, " "), err.Error())
+						panic(err.Error())
+					} else {
+						persistence.GetCacheInstance().
+							Put("blame", blameID, buggyChanges)
+					}
+
 				}
 
 				//we need to git blame with the --follow option so that it follows renames in the file, and the '-l'
@@ -649,7 +829,6 @@ func (git *CMD) annotate(regionChunks map[string][]string, commit Commit, repoDi
 				if _, present := bugIntroducingChanges[buggyChangesString]; !present {
 					bugIntroducingChanges[buggyChangesString] = struct{}{}
 				}
-
 			}
 		}
 	}

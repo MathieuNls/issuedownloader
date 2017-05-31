@@ -1,6 +1,6 @@
 package pogo
 
-// Comment represents a comment in a bug report
+// Project represents a project in a bug report
 type Project interface {
 	String() string
 	Name() string

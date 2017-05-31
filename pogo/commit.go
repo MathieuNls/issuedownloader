@@ -1,7 +1,6 @@
-package git
+package pogo
 
 import (
-	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
@@ -12,7 +11,8 @@ import (
 
 // Commit represents a Git commit
 type Commit struct {
-	RepositoryID            string
+	ID                      int64
+	RepositoryID            int
 	CommitHash              string
 	ParentHashes            []string
 	AuthorName              string
@@ -22,11 +22,12 @@ type Commit struct {
 	Reviewers               []string
 	CommitMessage           string
 	CommitMessageWords      map[string]float32
-	Classification          []string
+	Classification          map[string]float64
 	Linked                  bool
 	ContainsBug             bool
 	FixHashes               []string
-	FixReports              []string
+	FixReportIDs            []string
+	FixReports              []Report
 	Subsystems              int
 	Directories             int
 	Files                   int
@@ -49,7 +50,8 @@ type Commit struct {
 //NewCommit proerply handle the construction of a Git Commit
 func NewCommit(parentHashes []string, commitHash string, authorName string,
 	authorEmail string, authorDate string, authorDateUnixTimestamp string,
-	commitMessage string, regexFix string, regexReviewer string, isP4 bool) *Commit {
+	commitMessage string, regexFix string, regexReviewer string, isP4 bool,
+	repositoryID int) *Commit {
 
 	commit := Commit{}
 
@@ -60,6 +62,7 @@ func NewCommit(parentHashes []string, commitHash string, authorName string,
 	commit.AuthorDate = authorDate
 	commit.CommitMessage = commitMessage
 	commit.CommitMessageWords = wordnet.ExtractUniqWords(commit.CommitMessage)
+	commit.RepositoryID = repositoryID
 
 	//trying to parse the unix timestamp
 	var err error
@@ -69,22 +72,22 @@ func NewCommit(parentHashes []string, commitHash string, authorName string,
 	}
 
 	if len(commit.ParentHashes) == 2 {
-		commit.Classification = []string{"Merge"}
+		commit.Classification = map[string]float64{
+			"merge": 100.0,
+		}
 	}
 
 	//Extracts the fixes w/ regards to regexFix
 	re := regexp.MustCompile(regexFix)
 	resultSlice := re.FindAllStringSubmatch(commit.CommitMessage, -1)
-	commit.FixReports = []string{}
+	commit.FixReportIDs = []string{}
 	for index := 0; index < len(resultSlice); index++ {
 		if len(resultSlice[index]) == 4 {
-			commit.FixReports = append(commit.FixReports, resultSlice[index][3])
+			commit.FixReportIDs = append(commit.FixReportIDs, resultSlice[index][3])
 		} else if len(resultSlice[index]) == 2 {
-			commit.FixReports = append(commit.FixReports, resultSlice[index][1])
+			commit.FixReportIDs = append(commit.FixReportIDs, resultSlice[index][1])
 		}
 	}
-
-	fmt.Println("Fixes", commit.FixReports)
 
 	//Extracts the reviewers w/ regards to regexReviewer
 	commit.Reviewers = []string{}
@@ -97,8 +100,10 @@ func NewCommit(parentHashes []string, commitHash string, authorName string,
 	}
 
 	//Compute the classification
-	if len(commit.FixReports) > 0 {
-		commit.Classification = []string{"corrective"}
+	if len(commit.FixReportIDs) > 0 {
+		commit.Classification = map[string]float64{
+			"corrective": 100.0,
+		}
 	} else {
 		commit.Classification = classifier.GetInstance().Categorize(commit.CommitMessage)
 	}
@@ -120,7 +125,7 @@ func NewCommit(parentHashes []string, commitHash string, authorName string,
 //String returns a string representation of a commit
 func (c Commit) String() string {
 
-	return "RepositoryID: " + c.RepositoryID + "\n" +
+	return "RepositoryID: " + strconv.Itoa(c.RepositoryID) + "\n" +
 		"CommitHash: " + c.CommitHash + "\n" +
 		"ParentHashes: " + strings.Join(c.ParentHashes, ",") + "\n" +
 		"AuthorName: " + c.AuthorName + "\n" +
@@ -129,7 +134,6 @@ func (c Commit) String() string {
 		"AuthorDate: " + c.AuthorDate + "\n" +
 		"Reviewers: " + strings.Join(c.Reviewers, ",") + "\n" +
 		"CommitMessage: " + c.CommitMessage + "\n" +
-		"Classification: " + strings.Join(c.Classification, ",") + "\n" +
 		"Linked: " + strconv.FormatBool(c.Linked) + "\n" +
 		"ContainsBug: " + strconv.FormatBool(c.ContainsBug) + "\n" +
 		"Fixes: " + strings.Join(c.FixHashes, ",") + "\n" +
