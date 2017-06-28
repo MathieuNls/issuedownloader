@@ -78,7 +78,7 @@ func NewSQL(db *sql.DB, projectKey string, id string, databaseName string) (*Rep
 		issuetype ON issuetype.ID = jiraissue.issuetype
 			JOIN
 		project ON project.ID = jiraissue.PROJECT 
-			AND project.pkey = '`+projectKey+`' 
+			AND project.ORIGINALKEY = '`+projectKey+`' 
 			LEFT JOIN
 		jiraaction ON jiraissue.ID = jiraaction.issueid
 			AND jiraaction.actiontype = 'comment'
@@ -125,7 +125,7 @@ func NewSQL(db *sql.DB, projectKey string, id string, databaseName string) (*Rep
 			&COMMENT)
 
 		if err != nil {
-			panic(err)
+			return nil, err
 		}
 
 		if r.ExternalID == "" {

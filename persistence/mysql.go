@@ -333,7 +333,7 @@ func (mysql *MySQLAdaptor) IsBuggy(commit *pogo.Commit, repoID int) {
 		panic(err.Error())
 	}
 
-	_, err = stmt.Exec(findCommit(commit.CommitHash, repoID, mysql.Db))
+	_, err = stmt.Exec(findCommit(commit.CommitHash, repoID, mysql.Db).ID)
 
 	if err != nil {
 		panic(err.Error())
@@ -348,7 +348,10 @@ func (mysql *MySQLAdaptor) IsBuggy(commit *pogo.Commit, repoID int) {
 		if err != nil {
 			panic(err.Error())
 		}
-		_, err = stmt.Exec(commit.ID, findCommit(fixingHash, repoID, mysql.Db))
+		_, err = stmt.Exec(
+			findCommit(commit.CommitHash, repoID, mysql.Db).ID,
+			findCommit(fixingHash, repoID, mysql.Db).ID,
+		)
 		if err != nil {
 			panic(err.Error())
 		}

@@ -132,7 +132,7 @@ var sqlFindCommit = `Select id, is_linked FROM commit where hash = ? and reposit
 
 var sqlUpdateBuggyCommit = `UPDATE commit
 							SET
-							is_buggy = true,
+							is_buggy = true
 							WHERE id = ?;`
 
 var sqlUpdateLinkedCommit = `UPDATE commit

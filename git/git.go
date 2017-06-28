@@ -449,7 +449,7 @@ func (git *CMD) LinkCorrectiveCommits(
 
 	//create worker to operate parrallel blames & annotates
 	for w := 0; w < git.Threads; w++ {
-		go git.linkerWorker(jobs, repoDir+"-bare-"+strconv.Itoa(w), results, w, len(correctiveCommits), logDir, repoID)
+		go git.linkerWorker(jobs, repoDir+"-bare-"+strconv.Itoa(w), results, w, 15000, logDir, repoID)
 		fmt.Println("creating worker", w)
 	}
 
@@ -459,7 +459,7 @@ func (git *CMD) LinkCorrectiveCommits(
 	}
 	close(jobs)
 
-	for i := 0; i < 15000; i++ { //len(correctiveCommits); i++ {
+	for i := 0; i < 14000; i++ { //len(correctiveCommits); i++ {
 		fmt.Println("received", i)
 
 		for k, v := range <-results {
