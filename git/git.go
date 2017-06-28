@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 
 	"io/ioutil"
 
@@ -338,7 +339,7 @@ func (git *CMD) Commits(
 			strings.Trim(prettyCommitDetails[4], " "),
 			strings.Trim(prettyCommitDetails[5], " "),
 			strings.Trim(prettyCommitDetails[6], " "),
-			`@fix(ed\()?( )?([a-zA-Z-]+[0-9]+)`,
+			`@fix(ed\()?( )?([a-zA-Z0-9]+-[0-9]+)`,
 			`@review\(([a-z,]+)\)`,
 			true,
 			repositoryID)
@@ -427,7 +428,7 @@ func (git *CMD) LinkCorrectiveCommits(
 	logDir string, repoID int) {
 
 	//Parallel stuff
-	jobs := make(chan commitChan, len(correctiveCommits))
+	jobs := make(chan commitChan, 15000) //len(correctiveCommits))
 	results := make(chan map[string][]string)
 	wg := sync.WaitGroup{}
 	wg.Add(git.Threads)
@@ -453,16 +454,19 @@ func (git *CMD) LinkCorrectiveCommits(
 	}
 
 	//Feed our bug fixes to the workers
-	for i := 0; i < len(correctiveCommits); i++ {
+	for i := 0; i < 15000; i++ { //len(correctiveCommits); i++ {
 		jobs <- commitChan{correctiveCommits[i], i}
 	}
 	close(jobs)
 
-	for i := 0; i < len(correctiveCommits); i++ {
+	for i := 0; i < 15000; i++ { //len(correctiveCommits); i++ {
 		fmt.Println("received", i)
 
 		for k, v := range <-results {
-			linkedCommits[k] = append(linkedCommits[k], v...)
+			//response for a timeout is null
+			if v != nil {
+				linkedCommits[k] = append(linkedCommits[k], v...)
+			}
 		}
 	}
 
@@ -539,21 +543,22 @@ func (git *CMD) linkerWorker(
 
 				//Ids are extracted at commit instantiation
 				for _, reportID := range commit.FixReportIDs {
-
+					fmt.Println("fetching report", git.ReportLinker.DBName()+"_"+reportID)
 					//Do we have that report in cache ?
 					if report := persistence.GetCacheInstance().
-						Fetch("report", git.ReportLinker.DBName()+"_"+reportID); report != nil {
+						Fetch("report", git.ReportLinker.DBName()+"_"+strings.Replace(reportID, "ACE-", "", 1)); report != nil {
 						fmt.Println("Cache hit report")
 						pogoReport = &jira.Report{ReportAttributes: report.(pogo.ReportAttributes)}
 					} else {
 						pogoReport, err = git.ReportLinker.Fetch(reportID)
-
-						if err != nil {
-							log.Panic(err, correctiveCommit, reportID)
-						}
 					}
 
-					commit.FixReports = append(commit.FixReports, pogoReport)
+					if err != nil {
+						fmt.Println(err.Error(), correctiveCommit, reportID)
+					} else {
+						commit.FixReports = append(commit.FixReports, pogoReport)
+					}
+
 				}
 			}
 
@@ -565,13 +570,28 @@ func (git *CMD) linkerWorker(
 			localWg.Done()
 		}(&wg, correctiveCommit.Commit)
 
-		wg.Wait()
-
-		results <- linkedCommits
-		fmt.Println("worker", id, "/", git.Threads, "finished job", correctiveCommit.ID, "/", total, float64(correctiveCommit.ID)/float64(total)*100, "%")
-
+		if waitTimeout(&wg, time.Hour) {
+			fmt.Println("worker", id, "/", git.Threads, "timed out", correctiveCommit.ID, "/", total, float64(correctiveCommit.ID)/float64(total)*100, "%")
+			results <- nil
+		} else {
+			results <- linkedCommits
+			fmt.Println("worker", id, "/", git.Threads, "finished job", correctiveCommit.ID, "/", total, float64(correctiveCommit.ID)/float64(total)*100, "%")
+		}
 	}
+}
 
+func waitTimeout(wg *sync.WaitGroup, timeout time.Duration) bool {
+	c := make(chan struct{})
+	go func() {
+		defer close(c)
+		wg.Wait()
+	}()
+	select {
+	case <-c:
+		return false // completed normally
+	case <-time.After(timeout):
+		return true // timed out
+	}
 }
 
 //  getModifiedRegions returns the list of regions that were modified/deleted between this commit and its ancester.
@@ -608,7 +628,13 @@ func (git *CMD) getModifiedRegions(commit *pogo.Commit, repoDir string, logDir s
 		if diff, err = cmd.CombinedOutput(); err != nil {
 			log.Panic("There was an error running git diff command: ", err,
 				"--- bash ", "-c ", strings.Join(cmdArgs, " "), "at", repoDir, string(diff))
+
+			//write an empty file so we don't wait here ever again
+			exec.Command("bash", "-c", "touch "+logDir+diffID).Output()
+			persistence.GetCacheInstance().
+				Put("diff", diffID, []byte{})
 		} else {
+
 			persistence.GetCacheInstance().
 				Put("diff", diffID, diff)
 		}
@@ -637,11 +663,15 @@ func (git *CMD) getModifiedRegions(commit *pogo.Commit, repoDir string, logDir s
 			log.Println("There was an error running git diff command: ", err,
 				"--- git ", strings.Join(nameOnlyArgs, " "), " at", repoDir, "previous command was",
 				"--- bash ", "-c ", strings.Join(cmdArgs, " "), " at", repoDir, string(filesModifiedOUT))
-			// os.Exit(1)
+
+			//write an empty file so we don't wait here ever again
+			exec.Command("bash", "-c", "touch "+logDir+filesModifiedDiffID).Output()
+			persistence.GetCacheInstance().
+				Put("file_modified_diff", filesModifiedDiffID, []byte{})
 		} else {
 
 			persistence.GetCacheInstance().
-				Put("file_modified_diff", filesModifiedDiffID, diff)
+				Put("file_modified_diff", filesModifiedDiffID, filesModifiedOUT)
 		}
 
 	}
@@ -734,33 +764,36 @@ func (git *CMD) extractRegions(diff string, filesModified []string) map[string][
 			modLineInfo := strings.Split(lineInfo, " ")[1]
 			// remove clutter -> first line contains info on the class and last line irrelevant
 			modCodeInfo := strings.Split(strings.Replace(codeInfo, "\\n", "", -1), ":BUMPER_DELIMITER:")
-			modCodeInfo = modCodeInfo[1 : len(modCodeInfo)-1]
 
-			// make sure this is legitimate. expect modified line info to start with '-'
-			if modLineInfo[0] != '-' {
-				continue
-			}
+			if len(modCodeInfo) > 2 {
+				modCodeInfo = modCodeInfo[1 : len(modCodeInfo)-1]
 
-			//remove comma from mod_line_info as we only care about the start of the modification
-			if strings.Index(modLineInfo, ",") != -1 {
-				modLineInfo = modLineInfo[0:strings.Index(modLineInfo, ",")]
-			}
+				// make sure this is legitimate. expect modified line info to start with '-'
+				if modLineInfo[0] != '-' {
+					continue
+				}
 
-			//remove the '-' in front of the line number by abs
-			currentLine, _ := strconv.ParseFloat(modLineInfo, 64)
-			currentLine = math.Abs(currentLine)
+				//remove comma from mod_line_info as we only care about the start of the modification
+				if strings.Index(modLineInfo, ",") != -1 {
+					modLineInfo = modLineInfo[0:strings.Index(modLineInfo, ",")]
+				}
 
-			//now only use the code line changes that MODIFIES (not adds) in the diff
-			for _, section := range modCodeInfo {
+				//remove the '-' in front of the line number by abs
+				currentLine, _ := strconv.ParseFloat(modLineInfo, 64)
+				currentLine = math.Abs(currentLine)
 
-				// this line modifies or deletes a line of code
-				if strings.Index(section, ":BUMPER_DELIMITER_START:-") != -1 {
+				//now only use the code line changes that MODIFIES (not adds) in the diff
+				for _, section := range modCodeInfo {
 
-					regionDiff[fileName] = append(regionDiff[fileName], strconv.FormatFloat(currentLine, 'f', 0, 64))
+					// this line modifies or deletes a line of code
+					if strings.Index(section, ":BUMPER_DELIMITER_START:-") != -1 {
 
-					// we only increment modified lines of code because those lines did NOT exist
-					// in the previous commit!
-					currentLine++
+						regionDiff[fileName] = append(regionDiff[fileName], strconv.FormatFloat(currentLine, 'f', 0, 64))
+
+						// we only increment modified lines of code because those lines did NOT exist
+						// in the previous commit!
+						currentLine++
+					}
 				}
 			}
 		}
@@ -813,8 +846,11 @@ func (git *CMD) annotate(regionChunks map[string][]string, commit *pogo.Commit, 
 					cmd.Dir = repoDir
 
 					if buggyChanges, err = cmd.CombinedOutput(); err != nil {
-						log.Panic("There was an error running git blame command: ", "bash -c", strings.Join(blameArgs, " "), err.Error())
-						panic(err.Error())
+						fmt.Println("There was an error running git blame command: ", "bash -c", strings.Join(blameArgs, " "), err.Error())
+						//write an empty file so we don't wait here ever again
+						exec.Command("bash", "-c", "touch "+logDir+blameID).Output()
+						persistence.GetCacheInstance().
+							Put("blame", blameID, []byte{})
 					} else {
 						persistence.GetCacheInstance().
 							Put("blame", blameID, buggyChanges)

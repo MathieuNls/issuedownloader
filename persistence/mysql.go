@@ -208,9 +208,7 @@ func (mysql *MySQLAdaptor) insertWords(words func(int) map[string]int, table str
 //SyncReports sync reports
 func (mysql *MySQLAdaptor) SyncReports(reports []pogo.Report, repoID int, commitHash string) {
 
-	fmt.Println(".. Saving commit's reports", commitHash, len(reports))
-
-	commitID := findCommit(commitHash, repoID, mysql.Db)
+	commit := findCommit(commitHash, repoID, mysql.Db)
 
 	if len(reports) > 0 {
 		sqlStr := sqlInsertCommitReport
@@ -219,6 +217,7 @@ func (mysql *MySQLAdaptor) SyncReports(reports []pogo.Report, repoID int, commit
 
 			//Is that report already locally synced ?
 			if report.Attributes().ID == 0 {
+				fmt.Println(".. Saving commit's reports", commitHash)
 				stmIns, err := mysql.Db.Prepare(sqlInsertReport)
 				if err != nil {
 					panic(err.Error())
@@ -249,7 +248,7 @@ func (mysql *MySQLAdaptor) SyncReports(reports []pogo.Report, repoID int, commit
 
 					stmIns.Close()
 
-					mysql.Cache.Put("report", reportAttributes.ExternalID, reportAttributes)
+					mysql.Cache.Put("report", reportAttributes.ExternalID, *reportAttributes)
 
 					mysql.insertWords(func(gram int) map[string]int {
 						return wordnet.ExtractUniqGrams(report.AllText(9999999), gram)
@@ -266,9 +265,10 @@ func (mysql *MySQLAdaptor) SyncReports(reports []pogo.Report, repoID int, commit
 
 			}
 
-			if report.Attributes().ID != 0 {
-
-				sqlStr += "(" + strconv.Itoa(int(commitID)) + "," + strconv.Itoa(int(report.Attributes().ID)) + "),"
+			if report.Attributes().ID != 0 &&
+				mysql.Cache.Fetch("report_commit", strconv.Itoa(int(commit.ID))+"-"+strconv.Itoa(int(report.Attributes().ID))) != nil {
+				mysql.Cache.Put("report_commit", strconv.Itoa(int(commit.ID))+"-"+strconv.Itoa(int(report.Attributes().ID)), "there")
+				sqlStr += "(" + strconv.Itoa(int(commit.ID)) + "," + strconv.Itoa(int(report.Attributes().ID)) + "),"
 			}
 
 		}
@@ -281,7 +281,8 @@ func (mysql *MySQLAdaptor) SyncReports(reports []pogo.Report, repoID int, commit
 			_, errFile := mysql.Db.Exec(sqlStr)
 
 			if errFile != nil {
-				panic(errFile.Error() + "hash: " + commitHash)
+				fmt.Println(errFile.Error() + "hash: " + commitHash)
+				panic(errFile)
 			}
 		}
 
@@ -307,7 +308,7 @@ func (mysql *MySQLAdaptor) SyncReportsComment(comments []pogo.CommentAttribut, r
 
 		if err != nil {
 			fmt.Println(comment)
-			panic(err.Error())
+			panic(err)
 		}
 
 		commentID, err := result.LastInsertId()
@@ -317,7 +318,7 @@ func (mysql *MySQLAdaptor) SyncReportsComment(comments []pogo.CommentAttribut, r
 		}, "comment_word", commentID)
 
 		if err != nil {
-			panic(err.Error())
+			panic(err)
 		}
 
 		stmIns.Close()
@@ -359,17 +360,21 @@ func (mysql *MySQLAdaptor) IsBuggy(commit *pogo.Commit, repoID int) {
 
 func (mysql *MySQLAdaptor) IsLinked(commit *pogo.Commit, repoID int) {
 
-	stmt, err := mysql.Db.Prepare(sqlUpdateLinkedCommit)
-	if err != nil {
-		panic(err.Error())
+	c := findCommit(commit.CommitHash, repoID, mysql.Db)
+
+	if c.Linked == false {
+		stmt, err := mysql.Db.Prepare(sqlUpdateLinkedCommit)
+		if err != nil {
+			panic(err.Error())
+		}
+
+		_, err = stmt.Exec(c.ID)
+
+		if err != nil {
+			panic(err.Error())
+		}
+
+		stmt.Close()
 	}
-
-	_, err = stmt.Exec(findCommit(commit.CommitHash, repoID, mysql.Db))
-
-	if err != nil {
-		panic(err.Error())
-	}
-
-	stmt.Close()
 
 }

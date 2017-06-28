@@ -128,7 +128,7 @@ var sqlInsertSeverity = `INSERT INTO severity
 						VALUES
 						(?);`
 
-var sqlFindCommit = `Select id FROM commit where hash = ? and repository_id = ? LIMIT 1`
+var sqlFindCommit = `Select id, is_linked FROM commit where hash = ? and repository_id = ? LIMIT 1`
 
 var sqlUpdateBuggyCommit = `UPDATE commit
 							SET

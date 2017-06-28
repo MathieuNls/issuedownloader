@@ -21,7 +21,7 @@ type stat struct {
 
 var instance Cache
 var once sync.Once
-var mutex *sync.Mutex
+var mutex *sync.RWMutex
 
 func GetCacheInstance() Cache {
 	once.Do(func() {
@@ -29,7 +29,7 @@ func GetCacheInstance() Cache {
 			stores: make(map[string]map[interface{}]interface{}),
 			stats:  make(map[string]*stat),
 		}
-		mutex = &sync.Mutex{}
+		mutex = &sync.RWMutex{}
 	})
 	return instance
 }

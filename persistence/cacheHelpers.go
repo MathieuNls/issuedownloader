@@ -42,6 +42,7 @@ type commit struct {
 	ID     int64
 	Hash   string
 	RepoID int
+	Linked bool
 }
 
 func findPeople(email string, lastname string, firstname string, ssoID string, Db *sql.DB) int64 {
@@ -225,26 +226,34 @@ func findSeverity(severity string, Db *sql.DB) int64 {
 	return severityID
 }
 
-func findCommit(hash string, repoID int, Db *sql.DB) int64 {
+func findCommit(hash string, repoID int, Db *sql.DB) commit {
 
 	if cachedCommit := GetCacheInstance().Fetch("commit", strings.Join([]string{hash, strconv.Itoa(repoID)}, "")); cachedCommit != nil {
-		return cachedCommit.(int64)
+		return cachedCommit.(commit)
 	}
 
 	var commitID int64
+	var linked bool
 	stmSel, err := Db.Prepare(sqlFindCommit)
 	if err != nil {
 		panic(err.Error())
 	}
-	err = stmSel.QueryRow(hash, repoID).Scan(&commitID)
+	err = stmSel.QueryRow(hash, repoID).Scan(&commitID, &linked)
 	stmSel.Close()
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	cacheCommit(commitID, hash, repoID)
+	c := commit{
+		Hash:   hash,
+		ID:     commitID,
+		Linked: linked,
+		RepoID: repoID,
+	}
 
-	return commitID
+	cacheCommit(commitID, hash, repoID, linked)
+
+	return c
 }
 
 // func findReport(string externalId, Db *sql.DB) int64 {
@@ -288,8 +297,16 @@ func cacheSeverity(severity string, severityID int64) {
 	})
 }
 
-func cacheCommit(commitID int64, hash string, repoID int) {
-	GetCacheInstance().Put("commit", strings.Join([]string{hash, strconv.Itoa(repoID)}, ""), commitID)
+func cacheCommit(commitID int64, hash string, repoID int, linked bool) {
+
+	c := commit{
+		Hash:   hash,
+		ID:     commitID,
+		Linked: linked,
+		RepoID: repoID,
+	}
+
+	GetCacheInstance().Put("commit", strings.Join([]string{hash, strconv.Itoa(repoID)}, ""), c)
 }
 
 func cacheReport(externalID string, reportID int64) {
@@ -298,7 +315,6 @@ func cacheReport(externalID string, reportID int64) {
 		ID:         reportID,
 		ExternalID: externalID,
 	}
-
 	GetCacheInstance().Put("report", externalID, attr)
 }
 
@@ -309,10 +325,11 @@ func WarmupCache(Db *sql.DB, logDirs []string) {
 	queries := []string{
 		"Select * from file",
 		"Select * from people",
-		"Select id, hash, repository_id from commit",
+		"Select id, hash, repository_id, is_linked from commit",
 		"Select * from word",
 		"Select * from severity",
 		"Select external_id, id from report",
+		"Select * from commit_report",
 	}
 
 	cachingFunctions := []func(rows *sql.Rows){
@@ -335,9 +352,10 @@ func WarmupCache(Db *sql.DB, logDirs []string) {
 			var id int64
 			var repoID int
 			var hash string
+			var linked bool
 
-			rows.Scan(&id, &hash, &repoID)
-			cacheCommit(id, hash, repoID)
+			rows.Scan(&id, &hash, &repoID, &linked)
+			cacheCommit(id, hash, repoID, linked)
 		},
 		func(rows *sql.Rows) {
 			var id int64
@@ -360,6 +378,12 @@ func WarmupCache(Db *sql.DB, logDirs []string) {
 
 			rows.Scan(&externalID, &id)
 			cacheReport(externalID, id)
+		},
+		func(rows *sql.Rows) {
+			var commitID int64
+			var reportID int64
+			rows.Scan(&commitID, &reportID)
+			GetCacheInstance().Put("report_commit", strconv.Itoa(int(commitID))+"-"+strconv.Itoa(int(reportID)), "there")
 		},
 	}
 

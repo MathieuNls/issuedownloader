@@ -1,0 +1,23 @@
+package: .
+import:
+- package: github.com/BUMPER/IssueDownloader
+  subpackages:
+  - pogo
+- package: github.com/fluhus/gostuff
+  subpackages:
+  - nlp
+- package: github.com/go-sql-driver/mysql
+  version: ^1.3.0
+- package: github.com/kennygrant/sanitize
+  version: ^1.2.0
+- package: github.com/mathieunls/deepchange-downloader
+  subpackages:
+  - classifiers
+  - git
+  - helper
+  - jira
+  - persistence
+  - pogo
+  - wordnet
+- package: gopkg.in/fatih/set.v0
+  version: ^0.1.0
