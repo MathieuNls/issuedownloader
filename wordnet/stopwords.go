@@ -1,6 +1,6 @@
 package wordnet
 
-import set "gopkg.in/fatih/set.v0"
+import "github.com/fatih/set"
 
 var stopwords = set.New(
 	"a",
