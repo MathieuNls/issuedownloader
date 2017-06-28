@@ -1,10 +1,11 @@
-package persistence
+package gcache
 
 import (
 	"strconv"
 	"sync"
 )
 
+//Cache defines what caching do
 type Cache interface {
 	Put(store string, key interface{}, value interface{})
 	Fetch(store string, key interface{}) interface{}
@@ -12,6 +13,7 @@ type Cache interface {
 	Stats(store string) stat
 }
 
+//stat contains stats for our cache stores
 type stat struct {
 	Name     string
 	Elements int
@@ -23,6 +25,7 @@ var instance Cache
 var once sync.Once
 var mutex *sync.RWMutex
 
+//GetCacheInstance returns a Singleton of a Cache store
 func GetCacheInstance() Cache {
 	once.Do(func() {
 		instance = &memoryCache{
@@ -34,6 +37,7 @@ func GetCacheInstance() Cache {
 	return instance
 }
 
+//String returns string representation of a stat struct
 func (stat stat) String() string {
 	return stat.Name + "\n" +
 		" - Elements:" + strconv.Itoa(stat.Elements) + "\n" +
@@ -41,15 +45,19 @@ func (stat stat) String() string {
 		" - Misses:" + strconv.Itoa(stat.Misses)
 }
 
+//memoryCache is an implementation of Cache
 type memoryCache struct {
 	stores map[string]map[interface{}]interface{}
 	stats  map[string]*stat
 }
 
+//Stats returns the stats of a given cachestore
 func (mc *memoryCache) Stats(store string) stat {
 	return *mc.stats[store]
 }
 
+//Put puts a new key/value into the given store.
+//If the store doesn t exist, it'll be created
 func (mc *memoryCache) Put(store string, key interface{}, value interface{}) {
 
 	mutex.Lock()
@@ -66,6 +74,7 @@ func (mc *memoryCache) Put(store string, key interface{}, value interface{}) {
 	mutex.Unlock()
 }
 
+//createStore creates a new store and associated stats struct
 func (mc *memoryCache) createStore(store string) {
 	mc.stores[store] = make(map[interface{}]interface{})
 	mc.stats[store] = &stat{
@@ -76,22 +85,25 @@ func (mc *memoryCache) createStore(store string) {
 	}
 }
 
+//FetchWithCB fetches an element with a callback
 func (mc *memoryCache) FetchWithCB(store string, key interface{}, callback func(interface{}) interface{}) interface{} {
 
 	tmp := mc.Fetch(store, key)
 
-	if tmp != nil {
+	if tmp != nil && callback != nil {
 		return callback(tmp)
 	}
 	return tmp
 }
 
+//Fetch fetches an element
 func (mc *memoryCache) Fetch(store string, key interface{}) interface{} {
 
 	mutex.Lock()
 	var value interface{}
 	if memoryStore, present := mc.stores[store]; present {
 		value = memoryStore[key]
+		mc.stats[store].Hits++
 	} else {
 
 		mc.createStore(store)

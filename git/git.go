@@ -18,6 +18,7 @@ import (
 	"github.com/mathieunls/deepchange-downloader/jira"
 	"github.com/mathieunls/deepchange-downloader/persistence"
 	"github.com/mathieunls/deepchange-downloader/pogo"
+	gcache "github.com/mathieunls/gcache/src"
 )
 
 // CMD is an abstraction of diverse git commands
@@ -545,7 +546,7 @@ func (git *CMD) linkerWorker(
 				for _, reportID := range commit.FixReportIDs {
 					fmt.Println("fetching report", git.ReportLinker.DBName()+"_"+reportID)
 					//Do we have that report in cache ?
-					if report := persistence.GetCacheInstance().
+					if report := gcache.GetCacheInstance().
 						Fetch("report", git.ReportLinker.DBName()+"_"+strings.Replace(reportID, "ACE-", "", 1)); report != nil {
 						fmt.Println("Cache hit report")
 						pogoReport = &jira.Report{ReportAttributes: report.(pogo.ReportAttributes)}
@@ -606,7 +607,7 @@ func (git *CMD) getModifiedRegions(commit *pogo.Commit, repoDir string, logDir s
 	diffID := "diff_" + commit.CommitHash + "^" + commit.CommitHash
 	filesModifiedDiffID := "file_modified_diff_" + commit.CommitHash + "^" + commit.CommitHash
 
-	if cachedDiffed := persistence.GetCacheInstance().
+	if cachedDiffed := gcache.GetCacheInstance().
 		Fetch("diff", diffID); cachedDiffed != nil {
 		diff = cachedDiffed.([]byte)
 	} else {
@@ -631,16 +632,16 @@ func (git *CMD) getModifiedRegions(commit *pogo.Commit, repoDir string, logDir s
 
 			//write an empty file so we don't wait here ever again
 			exec.Command("bash", "-c", "touch "+logDir+diffID).Output()
-			persistence.GetCacheInstance().
+			gcache.GetCacheInstance().
 				Put("diff", diffID, []byte{})
 		} else {
 
-			persistence.GetCacheInstance().
+			gcache.GetCacheInstance().
 				Put("diff", diffID, diff)
 		}
 	}
 
-	if cachedDiffed := persistence.GetCacheInstance().
+	if cachedDiffed := gcache.GetCacheInstance().
 		Fetch("file_modified_diff", filesModifiedDiffID); cachedDiffed != nil {
 		filesModifiedOUT = cachedDiffed.([]byte)
 	} else {
@@ -666,11 +667,11 @@ func (git *CMD) getModifiedRegions(commit *pogo.Commit, repoDir string, logDir s
 
 			//write an empty file so we don't wait here ever again
 			exec.Command("bash", "-c", "touch "+logDir+filesModifiedDiffID).Output()
-			persistence.GetCacheInstance().
+			gcache.GetCacheInstance().
 				Put("file_modified_diff", filesModifiedDiffID, []byte{})
 		} else {
 
-			persistence.GetCacheInstance().
+			gcache.GetCacheInstance().
 				Put("file_modified_diff", filesModifiedDiffID, filesModifiedOUT)
 		}
 
@@ -822,7 +823,7 @@ func (git *CMD) annotate(regionChunks map[string][]string, commit *pogo.Commit, 
 				var err error
 				blameID := "blame_" + line + "_" + commit.CommitHash + "_" + strings.Replace(file, "/", "--", -1)
 
-				if cachedBlame := persistence.GetCacheInstance().
+				if cachedBlame := gcache.GetCacheInstance().
 					Fetch("blame", blameID); cachedBlame != nil {
 					buggyChanges = cachedBlame.([]byte)
 				} else {
@@ -849,10 +850,10 @@ func (git *CMD) annotate(regionChunks map[string][]string, commit *pogo.Commit, 
 						fmt.Println("There was an error running git blame command: ", "bash -c", strings.Join(blameArgs, " "), err.Error())
 						//write an empty file so we don't wait here ever again
 						exec.Command("bash", "-c", "touch "+logDir+blameID).Output()
-						persistence.GetCacheInstance().
+						gcache.GetCacheInstance().
 							Put("blame", blameID, []byte{})
 					} else {
-						persistence.GetCacheInstance().
+						gcache.GetCacheInstance().
 							Put("blame", blameID, buggyChanges)
 					}
 

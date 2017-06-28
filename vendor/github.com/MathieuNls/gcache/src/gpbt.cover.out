@@ -1,0 +1,18 @@
+mode: atomic
+github.com/mathieunls/gcache/src/gcache.go:29.31,30.17 1 1
+github.com/mathieunls/gcache/src/gcache.go:37.2,37.17 1 1
+github.com/mathieunls/gcache/src/gcache.go:30.17,36.3 2 1
+github.com/mathieunls/gcache/src/gcache.go:41.34,46.2 1 1
+github.com/mathieunls/gcache/src/gcache.go:55.49,57.2 1 4
+github.com/mathieunls/gcache/src/gcache.go:61.78,64.55 2 2
+github.com/mathieunls/gcache/src/gcache.go:73.2,74.16 2 2
+github.com/mathieunls/gcache/src/gcache.go:64.55,67.3 1 1
+github.com/mathieunls/gcache/src/gcache.go:67.3,71.3 2 1
+github.com/mathieunls/gcache/src/gcache.go:78.50,86.2 2 2
+github.com/mathieunls/gcache/src/gcache.go:89.119,93.35 2 5
+github.com/mathieunls/gcache/src/gcache.go:96.2,96.12 1 4
+github.com/mathieunls/gcache/src/gcache.go:93.35,95.3 1 1
+github.com/mathieunls/gcache/src/gcache.go:100.73,104.55 3 7
+github.com/mathieunls/gcache/src/gcache.go:112.2,114.14 2 7
+github.com/mathieunls/gcache/src/gcache.go:104.55,107.3 2 6
+github.com/mathieunls/gcache/src/gcache.go:107.3,111.3 2 1

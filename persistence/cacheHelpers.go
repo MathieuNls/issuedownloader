@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/mathieunls/deepchange-downloader/pogo"
+	gcache "github.com/mathieunls/gcache/src"
 )
 
 //Following structs as used as database cache
@@ -47,7 +48,7 @@ type commit struct {
 
 func findPeople(email string, lastname string, firstname string, ssoID string, Db *sql.DB) int64 {
 
-	if people := GetCacheInstance().Fetch("people", email); people != nil {
+	if people := gcache.GetCacheInstance().Fetch("people", email); people != nil {
 		return people.(*peopleStruct).ID
 	}
 
@@ -89,7 +90,7 @@ func findWords(words []*wordStruct, Db *sql.DB) []*wordStruct {
 	var unknownWords []*wordStruct
 
 	for _, word := range words {
-		if cachedWord := GetCacheInstance().FetchWithCB(
+		if cachedWord := gcache.GetCacheInstance().FetchWithCB(
 			"word",
 			strings.Join([]string{word.Word, strconv.Itoa(word.Gram)}, ""),
 			func(tmpWord interface{}) interface{} {
@@ -124,7 +125,7 @@ func findWords(words []*wordStruct, Db *sql.DB) []*wordStruct {
 		//iterates on the created ids and cache the created files
 		for id, unknownWordID := lastID, 0; id <= rows; id++ {
 			unknownWords[unknownWordID].ID = id
-			GetCacheInstance().Put("word",
+			gcache.GetCacheInstance().Put("word",
 				strings.Join(
 					[]string{unknownWords[unknownWordID].Word,
 						strconv.Itoa(unknownWords[unknownWordID].Gram)},
@@ -146,7 +147,7 @@ func findFiles(files []string, repoID int, Db *sql.DB) []int64 {
 	//Get known files in cache
 	//& populate unknownFiles with the remaining ones
 	for _, file := range files {
-		if cachedFile := GetCacheInstance().Fetch("file", strings.Join([]string{file, strconv.Itoa(repoID)}, "")); cachedFile != nil {
+		if cachedFile := gcache.GetCacheInstance().Fetch("file", strings.Join([]string{file, strconv.Itoa(repoID)}, "")); cachedFile != nil {
 			cachedFiles = append(cachedFiles, cachedFile.(*fileStruct).ID)
 		} else {
 			unknownFiles = append(unknownFiles, file)
@@ -180,7 +181,7 @@ func findFiles(files []string, repoID int, Db *sql.DB) []int64 {
 		//iterates on the created ids and cache the created files
 		for id, unknownFileID := lastID, 0; id <= rows; id++ {
 			cachedFiles = append(cachedFiles, id)
-			GetCacheInstance().Put("file", strings.Join([]string{unknownFiles[unknownFileID], strconv.Itoa(repoID)}, ""), &fileStruct{
+			gcache.GetCacheInstance().Put("file", strings.Join([]string{unknownFiles[unknownFileID], strconv.Itoa(repoID)}, ""), &fileStruct{
 				ID:     id,
 				File:   unknownFiles[unknownFileID],
 				RepoID: repoID,
@@ -194,7 +195,7 @@ func findFiles(files []string, repoID int, Db *sql.DB) []int64 {
 
 func findSeverity(severity string, Db *sql.DB) int64 {
 
-	if cachedSeverity := GetCacheInstance().Fetch("severity", severity); cachedSeverity != nil {
+	if cachedSeverity := gcache.GetCacheInstance().Fetch("severity", severity); cachedSeverity != nil {
 		return cachedSeverity.(*severityStruct).ID
 	}
 
@@ -228,7 +229,7 @@ func findSeverity(severity string, Db *sql.DB) int64 {
 
 func findCommit(hash string, repoID int, Db *sql.DB) commit {
 
-	if cachedCommit := GetCacheInstance().Fetch("commit", strings.Join([]string{hash, strconv.Itoa(repoID)}, "")); cachedCommit != nil {
+	if cachedCommit := gcache.GetCacheInstance().Fetch("commit", strings.Join([]string{hash, strconv.Itoa(repoID)}, "")); cachedCommit != nil {
 		return cachedCommit.(commit)
 	}
 
@@ -261,7 +262,7 @@ func findCommit(hash string, repoID int, Db *sql.DB) commit {
 // }
 
 func cacheFile(file string, repoID int, fileID int64) {
-	GetCacheInstance().Put("file", strings.Join([]string{file, strconv.Itoa(repoID)}, ""), &fileStruct{
+	gcache.GetCacheInstance().Put("file", strings.Join([]string{file, strconv.Itoa(repoID)}, ""), &fileStruct{
 		ID:     fileID,
 		File:   file,
 		RepoID: repoID,
@@ -273,7 +274,7 @@ func cachePeople(
 	lastname string, firstname string,
 	ssoID string) {
 
-	GetCacheInstance().Put("people", email, &peopleStruct{
+	gcache.GetCacheInstance().Put("people", email, &peopleStruct{
 		ID:        peopleID,
 		Email:     email,
 		Lastname:  lastname,
@@ -283,7 +284,7 @@ func cachePeople(
 }
 
 func cacheWord(word string, gram int, wordID int64) {
-	GetCacheInstance().Put("word", strings.Join([]string{word, strconv.Itoa(gram)}, ""), &wordStruct{
+	gcache.GetCacheInstance().Put("word", strings.Join([]string{word, strconv.Itoa(gram)}, ""), &wordStruct{
 		ID:   wordID,
 		Word: word,
 		Gram: gram,
@@ -291,7 +292,7 @@ func cacheWord(word string, gram int, wordID int64) {
 }
 
 func cacheSeverity(severity string, severityID int64) {
-	GetCacheInstance().Put("severity", severity, &severityStruct{
+	gcache.GetCacheInstance().Put("severity", severity, &severityStruct{
 		ID:       severityID,
 		Severity: severity,
 	})
@@ -306,7 +307,7 @@ func cacheCommit(commitID int64, hash string, repoID int, linked bool) {
 		RepoID: repoID,
 	}
 
-	GetCacheInstance().Put("commit", strings.Join([]string{hash, strconv.Itoa(repoID)}, ""), c)
+	gcache.GetCacheInstance().Put("commit", strings.Join([]string{hash, strconv.Itoa(repoID)}, ""), c)
 }
 
 func cacheReport(externalID string, reportID int64) {
@@ -315,7 +316,7 @@ func cacheReport(externalID string, reportID int64) {
 		ID:         reportID,
 		ExternalID: externalID,
 	}
-	GetCacheInstance().Put("report", externalID, attr)
+	gcache.GetCacheInstance().Put("report", externalID, attr)
 }
 
 func WarmupCache(Db *sql.DB, logDirs []string) {
@@ -383,7 +384,7 @@ func WarmupCache(Db *sql.DB, logDirs []string) {
 			var commitID int64
 			var reportID int64
 			rows.Scan(&commitID, &reportID)
-			GetCacheInstance().Put("report_commit", strconv.Itoa(int(commitID))+"-"+strconv.Itoa(int(reportID)), "there")
+			gcache.GetCacheInstance().Put("report_commit", strconv.Itoa(int(commitID))+"-"+strconv.Itoa(int(reportID)), "there")
 		},
 	}
 
@@ -428,7 +429,7 @@ func WarmupCache(Db *sql.DB, logDirs []string) {
 			content, err := ioutil.ReadFile(logDir + file.Name())
 
 			if store != "" && err == nil {
-				GetCacheInstance().Put(store, file.Name(), content)
+				gcache.GetCacheInstance().Put(store, file.Name(), content)
 			} else {
 
 				log.Panic(file.Name(), "\n", store, "\n", file.Name(), "\n", content)

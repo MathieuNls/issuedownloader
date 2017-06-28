@@ -10,6 +10,7 @@ import (
 	"github.com/mathieunls/deepchange-downloader/helper"
 	"github.com/mathieunls/deepchange-downloader/pogo"
 	"github.com/mathieunls/deepchange-downloader/wordnet"
+	gcache "github.com/mathieunls/gcache/src"
 )
 
 //MySQLAdaptor retuns a MySQLAdaptor
@@ -17,7 +18,7 @@ type MySQLAdaptor struct {
 	Db           *sql.DB
 	DatabaseName string
 	Gram         int
-	Cache        Cache
+	Cache        gcache.Cache
 	nbCommit     int
 }
 

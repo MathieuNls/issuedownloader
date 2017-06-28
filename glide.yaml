@@ -9,3 +9,5 @@ import:
   version: ^1.3.0
 - package: github.com/kennygrant/sanitize
   version: ^1.2.0
+- package: github.com/sajari/regression
+- package: github.com/MathieuNls/gcache
